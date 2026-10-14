@@ -316,3 +316,36 @@ test('routing ranks follow the scheduler: priority high to low, then auth ID in 
   // A disabled flag counts as Off whatever the mode says.
   assert.equal(routingOrder([{ id: 'd', priority: 5, mode: 'rotation', disabled: true }], 'fill-first')[0].rank, 0);
 });
+
+test('a missing used share is no reading, and an old reading is marked stale with its age', async () => {
+  const { limits, left, meterCell } = await import('../../internal/api/dashboard/core.js');
+  const t0 = Date.now();
+  const claude = (signals) => ({ id: 'c', provider: 'claude', quota: { observed_at: iso(t0), signals } });
+  const meterAt = (utilization, observed) => ({ router: { accounts: { c: { meters: [{ name: '7d', utilization, reset_at: iso(t0 + DAY), observed_at: iso(observed), long: true }] } } } });
+  try {
+    // A reset header without a utilization is not 100% left.
+    S.data = { router: { accounts: {} } };
+    assert.equal(limits(claude({ 'Anthropic-Ratelimit-Unified-7d-Reset': String(Math.floor((t0 + DAY) / 1000)) })).week, null);
+    assert.equal(left({ used: NaN }), null);
+    // A reset that has passed still starts a fresh week.
+    const rolled = limits(claude({ 'Anthropic-Ratelimit-Unified-7d-Utilization': '0.4', 'Anthropic-Ratelimit-Unified-7d-Reset': String(Math.floor((t0 - HOUR) / 1000)) })).week;
+    assert.equal(left(rolled), 100);
+    // A meter without utilization is no reading either.
+    S.data = meterAt(null, t0);
+    assert.equal(limits(claude({})).week, null);
+    // Read five minutes ago: fresh, with its age in the tooltip only.
+    S.data = meterAt(0.25, t0 - 5 * 60e3);
+    let w = limits(claude({})).week;
+    assert.equal(w.stale, false);
+    assert.equal(left(w), 75);
+    assert.match(meterCell(left(w), '', w), /^<span class="metercell" title="Read 5m ago">/);
+    assert.doesNotMatch(meterCell(left(w), '', w), /· /);
+    // Read two hours ago: stale, muted, and the age shows.
+    S.data = meterAt(0.25, t0 - 2 * HOUR - 60e3);
+    w = limits(claude({})).week;
+    assert.equal(w.stale, true);
+    assert.match(meterCell(left(w), '', w), /^<span class="metercell stale" title="Read 2h ago">.*<span>· 2h<\/span><\/span>$/);
+  } finally {
+    S.data = {};
+  }
+});

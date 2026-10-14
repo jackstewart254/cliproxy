@@ -591,6 +591,14 @@ export function inDays(n) {
   return "In " + n + " days";
 }
 
+// "just now", "4m ago", "2h ago" or "3d ago".
+export function ago(t) {
+  const m = Math.floor((Date.now() - toMs(t)) / 60e3);
+  if (m < 1) return "just now";
+  if (m < 60) return m + "m ago";
+  return m < 48 * 60 ? Math.floor(m / 60) + "h ago" : Math.floor(m / 1440) + "d ago";
+}
+
 // "Now", "15:38", or "Sun 4 Oct" for older.
 export function seen(t) {
   if (!t) return "";
@@ -686,6 +694,27 @@ const rollForward = (t, windowMs) => {
   return t;
 };
 
+// A reading's number, or NaN when it is missing: Number("") and Number(null)
+// are 0, which would read as nothing used.
+const num = (v) => (v === "" || v == null ? NaN : Number(v));
+
+// Idle accounts are probed every 20 minutes, so a reading older than this
+// means readings are not arriving.
+export const STALE_MS = 30 * 60e3;
+
+// Marks an item with when it was read and whether that is older than STALE_MS.
+function stamp(item, iso) {
+  if (!item) return null;
+  const at = validTime(iso) ? Date.parse(iso) : 0;
+  return Object.assign(item, { observed: at, stale: !!at && Date.now() - at > STALE_MS });
+}
+
+// An item without a used share shows as No reading, not as 100% left.
+const known = (item) => (item && Number.isFinite(item.used) ? item : null);
+
+// How long ago a limits() item was read ("4m ago"), or "" when unknown.
+export const readAge = (item) => (item?.observed ? ago(item.observed) : "");
+
 export function primeSet() {
   return new Set((S.data?.routing?.prime_after_reset || []).map((p) => String(p).toLowerCase()));
 }
@@ -700,50 +729,53 @@ function weekItem(provider, used, reset, windowMs) {
 }
 
 // Limits from the router's meters (per-model weeks, survive restarts), else
-// from the credential's last quota headers.
+// from the credential's last quota headers. Items carry when they were read.
 export function limits(acct) {
   const meters = S.data?.router?.accounts?.[acct.id]?.meters;
   const out = { week: null, short: null, extra: [] };
   if (meters && meters.length) {
     for (const m of meters) {
       const reset = validTime(m.reset_at) ? Date.parse(m.reset_at) : 0;
-      const item = { used: (Number(m.utilization) || 0) * 100, reset: reset > Date.now() ? reset : 0, burn: m.burn_per_hour > 0 ? m.burn_per_hour * 100 : 0, title: m.title };
+      const item = stamp({ used: num(m.utilization) * 100, reset: reset > Date.now() ? reset : 0, burn: m.burn_per_hour > 0 ? m.burn_per_hour * 100 : 0, title: m.title }, m.observed_at);
       if (m.long && m.reset_since_reading && primeSet().has(acct.provider)) Object.assign(item, { used: 0, reset: 0, notStarted: true });
+      if (!known(item)) continue;
       if ((m.name === "7d" || m.name === "secondary") && !out.week) out.week = item;
       else if ((m.name === "5h" || m.name === "primary") && !out.short) out.short = item;
       else out.extra.push(item);
     }
     if (out.week || out.short) return out;
   }
-  return signalLimits(acct, out);
+  const sl = signalLimits(acct, out);
+  return { ...sl, week: known(sl.week), short: known(sl.short) };
 }
 
 // Limits from the credential's last quota headers. This is what the live
-// soonest-reset router reads, so the queue order uses it.
+// soonest-reset router reads, so the queue order uses it. Like the router it
+// keeps a reset time that came without a used share; that item's used is NaN.
 export function signalLimits(acct, out = { week: null, short: null, extra: [] }) {
   const q = acct.quota || {};
   const s = q.signals || {};
   if (acct.provider === "claude") {
     const w = sig(s, "Anthropic-Ratelimit-Unified-7d-Utilization");
     const wr = resetTime(sig(s, "Anthropic-Ratelimit-Unified-7d-Reset"));
-    if (w || wr) out.week = weekItem("claude", Number(w) * 100, wr, 7 * 864e5);
+    if (w || wr) out.week = stamp(weekItem("claude", num(w) * 100, wr, 7 * 864e5), q.observed_at);
     const f = sig(s, "Anthropic-Ratelimit-Unified-5h-Utilization");
     const fr = resetTime(sig(s, "Anthropic-Ratelimit-Unified-5h-Reset"));
-    if (f || fr) out.short = { used: Number(f) * 100, reset: fr > Date.now() ? fr : 0 };
+    if (f || fr) out.short = stamp({ used: num(f) * 100, reset: fr > Date.now() ? fr : 0 }, q.observed_at);
   } else if (acct.provider === "codex") {
     for (const p of ["X-Codex-Primary-", "X-Codex-Secondary-"]) {
       const minutes = Number(sig(s, p + "Window-Minutes"));
       if (!minutes) continue;
       const reset = resetTime(sig(s, p + "Reset-At"), q.observed_at, sig(s, p + "Reset-After-Seconds"));
-      const used = Number(sig(s, p + "Used-Percent"));
-      if (minutes >= 6 * 24 * 60) out.week = weekItem("codex", used, reset, minutes * 6e4);
-      else out.short = { used, reset: reset > Date.now() ? reset : 0 };
+      const used = num(sig(s, p + "Used-Percent"));
+      if (minutes >= 6 * 24 * 60) out.week = stamp(weekItem("codex", used, reset, minutes * 6e4), q.observed_at);
+      else out.short = stamp({ used, reset: reset > Date.now() ? reset : 0 }, q.observed_at);
     }
   }
   return out;
 }
 
-export const left = (item) => (item ? Math.max(0, Math.min(100, 100 - (Number.isFinite(item.used) ? item.used : 0))) : null);
+export const left = (item) => (item && Number.isFinite(item.used) ? Math.max(0, Math.min(100, 100 - item.used)) : null);
 
 export function accounts() {
   const list = (S.data?.accounts || []).map((a) => {
@@ -775,7 +807,7 @@ export function status(acct) {
   const retry = validTime(acct.next_retry_after) ? Date.parse(acct.next_retry_after) : 0;
   const lim = limits(acct);
   if (retry && retry > Date.now()) {
-    const weekGone = (lim.week && left(lim.week) <= 0) || retry - Date.now() > 6 * 3600e3;
+    const weekGone = left(lim.week) === 0 || retry - Date.now() > 6 * 3600e3;
     return weekGone ? { kind: "usedup", text: "Used up", until: retry } : { kind: "limited", text: "Resting until " + clock(retry), until: retry };
   }
   const msg = String(acct.status_message || "");
@@ -784,7 +816,7 @@ export function status(acct) {
     return { kind: "error", text: msg ? "Error" : "Error", detail: msg };
   }
   if (acct.unavailable) return { kind: "limited", text: "Unavailable" };
-  if (lim.week && left(lim.week) <= 0) return { kind: "usedup", text: "Used up" };
+  if (left(lim.week) === 0) return { kind: "usedup", text: "Used up" };
   return { kind: "ready", text: "Ready" };
 }
 
@@ -896,10 +928,13 @@ export function email(addr) {
 export const pill = (text, cls = "") => `<span class="pill ${cls}">${esc(text)}</span>`;
 export const warnState = (text, cls = "") => `<span class="state ${cls}" title="${esc(text)}">${warnIcon(14)}<span class="clamp">${esc(text)}</span></span>`;
 
-export function meterCell(pctLeft, color = "") {
+// item, a limits() item, adds its reading's age: in the tooltip, and shown
+// short ("· 2h") on a muted cell once the reading is stale.
+export function meterCell(pctLeft, color = "", item = null) {
   if (pctLeft == null) return "";
   const p = Math.max(0, Math.min(100, pctLeft));
-  return `<span class="metercell"><span class="meter"><i style="width:${p}%${color ? ";background:" + color : ""}"></i></span><span class="${p <= 0 ? "muted" : ""}">${Math.round(p)}%</span></span>`;
+  const age = readAge(item);
+  return `<span class="metercell${item?.stale ? " stale" : ""}"${age ? ` title="Read ${age}"` : ""}><span class="meter"><i style="width:${p}%${color ? ";background:" + color : ""}"></i></span><span class="${p <= 0 ? "muted" : ""}">${Math.round(p)}%</span>${item?.stale ? `<span>· ${age.replace(/ ago$/, "")}</span>` : ""}</span>`;
 }
 
 export function seg(items, active, attr, cls = "") {

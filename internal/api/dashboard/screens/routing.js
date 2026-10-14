@@ -46,7 +46,7 @@ function queueRows(provider) {
         "",
         email(a.email),
         w?.reset ? esc(resetLong(st.kind === "usedup" ? st.until || w.reset : w.reset)) : "",
-        st.kind === "off" || st.kind === "blocked" || st.kind === "error" ? "" : w ? meterCell(st.kind === "usedup" ? 0 : left(w)) : `<span class="muted">No reading</span>`,
+        st.kind === "off" || st.kind === "blocked" || st.kind === "error" ? "" : w && (st.kind === "usedup" || left(w) != null) ? meterCell(st.kind === "usedup" ? 0 : left(w), "", w) : `<span class="muted">No reading</span>`,
         statusCell(a, q.next && a.id === q.next.id),
       ],
     });

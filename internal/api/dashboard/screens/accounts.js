@@ -30,8 +30,8 @@ function weekCells(a) {
   const w = lim.week, s = lim.short;
   if (st.kind === "off" || st.kind === "blocked" || st.kind === "error") return ["", "", ""];
   const resetAt = st.kind === "usedup" ? st.until || w?.reset : w?.reset;
-  const weekLeft = st.kind === "usedup" ? meterCell(0) : w ? (w.notStarted ? `<span class="muted">New week</span>` : meterCell(left(w))) : `<span class="muted">No reading</span>`;
-  const shortLeft = s && st.kind !== "usedup" ? meterCell(left(s)) : "";
+  const weekLeft = st.kind === "usedup" ? meterCell(0, "", w) : w ? (w.notStarted ? `<span class="muted">New week</span>` : meterCell(left(w), "", w)) : `<span class="muted">No reading</span>`;
+  const shortLeft = s && st.kind !== "usedup" ? meterCell(left(s), "", s) : "";
   return [weekLeft, resetAt ? esc(day(resetAt)) : "", shortLeft];
 }
 
