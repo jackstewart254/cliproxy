@@ -4,14 +4,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
-	"net"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/buildinfo"
-	"github.com/router-for-me/CLIProxyAPI/v8/internal/tailnetname"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/usagestats"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 )
 
@@ -28,12 +27,7 @@ var planDateFields = map[string]struct{}{"plan_renews_on": {}, "plan_ends_on": {
 // dashboardServer describes this proxy for the dashboard header.
 func (h *Handler) dashboardServer(c *gin.Context, now time.Time) gin.H {
 	address := ""
-	if name := tailnetname.SelfName(); name != "" {
-		address = name
-		if h.cfg != nil && h.cfg.Port > 0 {
-			address = net.JoinHostPort(name, strconv.Itoa(h.cfg.Port))
-		}
-	} else if c != nil && c.Request != nil {
+	if c != nil && c.Request != nil {
 		address = c.Request.Host
 	}
 	version := strings.TrimSpace(buildinfo.Commit)
@@ -44,7 +38,7 @@ func (h *Handler) dashboardServer(c *gin.Context, now time.Time) gin.H {
 		version = version[:8]
 	}
 	return gin.H{
-		"host":    tailnetname.LocalHostName(),
+		"host":    usagestats.HostName(),
 		"address": address,
 		"version": version,
 		"now":     now,

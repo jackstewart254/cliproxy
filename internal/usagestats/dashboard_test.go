@@ -99,12 +99,21 @@ func TestSessionParentModelAndAuthBreakdown(t *testing.T) {
 	}
 }
 
+func TestLocalMachineName(t *testing.T) {
+	if got := localMachineName("127.0.0.1"); got != HostName() {
+		t.Fatalf("loopback = %q, want %q", got, HostName())
+	}
+	if got := localMachineName("192.0.2.1"); got != "" {
+		t.Fatalf("other address = %q, want empty", got)
+	}
+}
+
 func TestSessionMetadataMergesEvenWhenPushedFirst(t *testing.T) {
 	clock := &testClock{now: time.Date(2026, 10, 4, 16, 0, 0, 0, time.UTC)}
 	store := newClockStore(clock)
 	store.machineName = func(ip string) string {
-		if ip == "100.101.102.103" {
-			return "desktop-home"
+		if ip == "127.0.0.1" {
+			return "this-mac"
 		}
 		return ""
 	}
@@ -119,10 +128,10 @@ func TestSessionMetadataMergesEvenWhenPushedFirst(t *testing.T) {
 	}); got != 2 {
 		t.Fatalf("updated = %d, want 2", got)
 	}
-	store.recordFrom(coreusage.Record{AuthID: "claude-a", SessionID: "claude:f9703c88", RequestedAt: clock.now}, "100.101.102.103")
-	store.recordFrom(coreusage.Record{AuthID: "claude-a", SessionID: "claude:f9703c88:agent:a1", RequestedAt: clock.now}, "100.101.102.103")
+	store.recordFrom(coreusage.Record{AuthID: "claude-a", SessionID: "claude:f9703c88", RequestedAt: clock.now}, "127.0.0.1")
+	store.recordFrom(coreusage.Record{AuthID: "claude-a", SessionID: "claude:f9703c88:agent:a1", RequestedAt: clock.now}, "127.0.0.1")
 	store.recordFrom(coreusage.Record{AuthID: "codex-a", SessionID: "codex:c1", RequestedAt: clock.now}, "")
-	store.recordFrom(coreusage.Record{AuthID: "codex-a", SessionID: "codex:other", RequestedAt: clock.now}, "100.101.102.103")
+	store.recordFrom(coreusage.Record{AuthID: "codex-a", SessionID: "codex:other", RequestedAt: clock.now}, "127.0.0.1")
 
 	check := func(store *Store) {
 		t.Helper()
@@ -136,8 +145,8 @@ func TestSessionMetadataMergesEvenWhenPushedFirst(t *testing.T) {
 		if got := sessions["codex:c1"]; got.Title != "Codex task" || got.Machine != "mbp-m3" {
 			t.Fatalf("codex session title %q machine %q", got.Title, got.Machine)
 		}
-		if got := sessions["codex:other"]; got.Machine != "desktop-home" || got.Title != "" {
-			t.Fatalf("unpushed session machine %q title %q, want the tailnet name", got.Machine, got.Title)
+		if got := sessions["codex:other"]; got.Machine != "this-mac" || got.Title != "" {
+			t.Fatalf("unpushed session machine %q title %q, want this host's name", got.Machine, got.Title)
 		}
 	}
 	check(store)

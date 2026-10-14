@@ -229,12 +229,12 @@ func TestSessionFieldsFollowTheLatestRequest(t *testing.T) {
 	older := clock.now.Add(-2 * time.Minute)
 
 	// The newer request finishes first; the older, slower one finishes after it.
-	store.recordFrom(coreusage.Record{AuthID: "claude-b", SessionID: "claude:s1", Model: "claude-opus-5-5", RequestedAt: newer}, "100.64.0.2")
-	store.recordFrom(coreusage.Record{AuthID: "claude-a", SessionID: "claude:s1", Model: "claude-sonnet-5-5", RequestedAt: older}, "100.64.0.1")
+	store.recordFrom(coreusage.Record{AuthID: "claude-b", SessionID: "claude:s1", Model: "claude-opus-5-5", RequestedAt: newer}, "192.0.2.2")
+	store.recordFrom(coreusage.Record{AuthID: "claude-a", SessionID: "claude:s1", Model: "claude-sonnet-5-5", RequestedAt: older}, "192.0.2.1")
 	check := func(store *Store, wantModel string, wantSeen time.Time) {
 		t.Helper()
 		session := store.sessions["claude:s1"]
-		if session.ServingAuthID != "claude-b" || session.Model != wantModel || session.ClientIP != "100.64.0.2" || !session.LastSeen.Equal(wantSeen) {
+		if session.ServingAuthID != "claude-b" || session.Model != wantModel || session.ClientIP != "192.0.2.2" || !session.LastSeen.Equal(wantSeen) {
 			t.Fatalf("session serving %q model %q ip %q last seen %s", session.ServingAuthID, session.Model, session.ClientIP, session.LastSeen)
 		}
 	}
@@ -243,8 +243,8 @@ func TestSessionFieldsFollowTheLatestRequest(t *testing.T) {
 	// A newest attempt that failed moves the model and last seen, not the
 	// serving account; a late success from before it does not move it back.
 	latest := clock.now.Add(-30 * time.Second)
-	store.recordFrom(coreusage.Record{AuthID: "claude-c", SessionID: "claude:s1", Model: "claude-fable-5-1", RequestedAt: latest, Failed: true}, "100.64.0.2")
-	store.recordFrom(coreusage.Record{AuthID: "claude-a", SessionID: "claude:s1", Model: "claude-sonnet-5-5", RequestedAt: older.Add(time.Second)}, "100.64.0.1")
+	store.recordFrom(coreusage.Record{AuthID: "claude-c", SessionID: "claude:s1", Model: "claude-fable-5-1", RequestedAt: latest, Failed: true}, "192.0.2.2")
+	store.recordFrom(coreusage.Record{AuthID: "claude-a", SessionID: "claude:s1", Model: "claude-sonnet-5-5", RequestedAt: older.Add(time.Second)}, "192.0.2.1")
 	check(store, "claude-fable-5-1", latest)
 
 	// The dashboard folds agent threads into their parent and needs
