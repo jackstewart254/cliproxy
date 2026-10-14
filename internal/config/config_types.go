@@ -372,6 +372,14 @@ type RoutingConfig struct {
 	// Default: true. Ignored when SessionAffinity is false.
 	SessionAffinitySubagents *bool `yaml:"session-affinity-subagents,omitempty" json:"session-affinity-subagents,omitempty"`
 
+	// SessionAffinityRebindOn controls when a session's binding moves to another credential.
+	// "any" (default): any unavailability of the bound credential rebinds the session.
+	// "quota": only an account-wide quota limit rebinds it; during any other cooldown the
+	// request is served by another credential and the session returns to its bound
+	// credential once that credential is available again.
+	// Unknown values fall back to "any". Ignored when SessionAffinity is false.
+	SessionAffinityRebindOn string `yaml:"session-affinity-rebind-on,omitempty" json:"session-affinity-rebind-on,omitempty"`
+
 	// PrimeAfterReset lists providers ("claude", "codex") whose weekly quota window
 	// starts at the first request after a reset. Under the soonest-reset strategy,
 	// a credential of these providers whose reset has passed takes the next new

@@ -914,6 +914,7 @@ type SessionAffinitySelector struct {
 	cache            *SessionCache
 	matcher          *cliproxysession.MerklePrefixMatcher
 	subagentAffinity bool
+	rebindOnQuota    bool
 }
 
 // SessionAffinityConfig configures the session affinity selector.
@@ -921,6 +922,9 @@ type SessionAffinityConfig struct {
 	Fallback         Selector
 	TTL              time.Duration
 	SubagentAffinity *bool
+	// RebindOnQuota keeps a session bound through every cooldown except an
+	// account-wide quota limit. Other cooldowns serve the request elsewhere once.
+	RebindOnQuota bool
 }
 
 // NewSessionAffinitySelector creates a new session-aware selector.
@@ -948,6 +952,7 @@ func NewSessionAffinitySelectorWithConfig(cfg SessionAffinityConfig) *SessionAff
 		cache:            NewSessionCache(cfg.TTL),
 		matcher:          cliproxysession.NewMerklePrefixMatcher(cfg.TTL),
 		subagentAffinity: subagentAffinity,
+		rebindOnQuota:    cfg.RebindOnQuota,
 	}
 }
 
@@ -1072,6 +1077,10 @@ func (s *SessionAffinitySelector) Pick(ctx context.Context, provider, model stri
 		if auth == nil {
 			return nil, nil
 		}
+		if !s.rebindAllowed(ctx, cachedAuthID, now) {
+			entry.Infof("session-affinity: bound auth temporarily unavailable, serving once | session=%s bound=%s auth=%s provider=%s model=%s", truncateSessionID(primaryID), cachedAuthID, auth.ID, provider, model)
+			return auth, nil
+		}
 		bind(auth.ID)
 		entry.Infof("session-affinity: cache hit but auth unavailable, reselected | session=%s auth=%s provider=%s model=%s", truncateSessionID(primaryID), auth.ID, provider, model)
 		return auth, nil
@@ -1109,6 +1118,28 @@ func (s *SessionAffinitySelector) Pick(ctx context.Context, provider, model stri
 		entry.Infof("session-affinity: cache miss, new binding | session=%s auth=%s provider=%s model=%s", truncateSessionID(primaryID), auth.ID, provider, model)
 	}
 	return auth, nil
+}
+
+// sessionAuthLookupKey carries the manager's credential lookup into Pick, which
+// otherwise only sees the credentials that are available for this request.
+type sessionAuthLookupKey struct{}
+
+// rebindAllowed reports whether a session bound to authID may move to another credential.
+// With RebindOnQuota only an account-wide quota limit, a disabled credential, or a removed
+// one moves it.
+func (s *SessionAffinitySelector) rebindAllowed(ctx context.Context, authID string, now time.Time) bool {
+	if !s.rebindOnQuota || ctx == nil {
+		return true
+	}
+	lookup, _ := ctx.Value(sessionAuthLookupKey{}).(func(string) (*Auth, bool))
+	if lookup == nil {
+		return true
+	}
+	auth, ok := lookup(authID)
+	if !ok || auth == nil || auth.Disabled || auth.Status == StatusDisabled {
+		return true
+	}
+	return auth.Quota.Exceeded && auth.Quota.Reason == "credential_quota" && auth.Quota.NextRecoverAt.After(now)
 }
 
 func (s *SessionAffinitySelector) pickLCP(ctx context.Context, provider, model string, opts cliproxyexecutor.Options, auths []*Auth, entry *log.Entry) (*Auth, bool, error) {
@@ -1550,6 +1581,10 @@ func (s *SessionAffinitySelector) OnResult(res Result) {
 		if fallbackKey != "" {
 			s.cache.Touch(fallbackKey, res.AuthID)
 		}
+		return
+	}
+	if s.rebindOnQuota {
+		// Pick decides whether the binding moves, from the credential's cooldown reason.
 		return
 	}
 

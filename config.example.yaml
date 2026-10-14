@@ -151,6 +151,14 @@ routing:
   # for maximum parallel concurrency.
   # Ignored when routing.session-affinity is false.
   session-affinity-subagents: true
+  # When a bound session may move to another credential:
+  #   "any" (default): whenever the bound credential is unavailable for any reason.
+  #   "quota": only when the bound credential hits an account-wide quota limit (for Claude,
+  #   a 5h/7d "rejected" 429). During any other cooldown (5xx, 529, 401/403, per-model
+  #   cooldowns) the request is still served by another credential, but the session stays
+  #   bound and returns to its credential once it is available again, keeping its prompt cache.
+  # Unknown values fall back to "any". Ignored when routing.session-affinity is false.
+  session-affinity-rebind-on: "any"
   # Providers ("claude", "codex") whose weekly quota window only starts at the first
   # request after a reset. Under soonest-reset, an account of these providers whose
   # reset has passed takes the next new session, which starts its new week at once
