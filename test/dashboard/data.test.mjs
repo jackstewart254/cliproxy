@@ -277,3 +277,22 @@ test('a padded reply is exact for its figure window only, and sums the window fr
   assert.equal(f.requests, 48);
   assert.equal(f.q, null);
 });
+
+test('a mode change keeps a custom priority that has the same sign', async () => {
+  const { setMode } = await import('../../internal/api/dashboard/core.js');
+  const sent = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => { sent.push(JSON.parse(opts.body)); return { ok: true, status: 200, json: async () => ({}) }; };
+  S.key = 'test';
+  const priorityAfter = async (acct, want) => { sent.length = 0; await setMode(acct, want); return sent.find((b) => 'priority' in b)?.priority; };
+  try {
+    assert.equal(await priorityAfter({ id: 'a', priority: 5, mode: 'off' }, 'rotation'), 5);
+    assert.equal(await priorityAfter({ id: 'a', priority: 5, mode: 'rotation' }, 'reserve'), -1);
+    assert.equal(await priorityAfter({ id: 'a', priority: -4, mode: 'off' }, 'reserve'), -4);
+    assert.equal(await priorityAfter({ id: 'a', priority: -4, mode: 'reserve' }, 'rotation'), 0);
+    assert.equal(await priorityAfter({ id: 'a', priority: 5, mode: 'rotation' }, 'off'), undefined);
+  } finally {
+    globalThis.fetch = realFetch;
+    S.key = '';
+  }
+});

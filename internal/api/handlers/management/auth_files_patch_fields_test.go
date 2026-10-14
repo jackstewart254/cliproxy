@@ -388,6 +388,92 @@ func TestPatchAuthFileFields_RejectsInvalidWeights(t *testing.T) {
 	}
 }
 
+func TestPatchAuthFileFields_PriorityValidatesPersistsAndSyncsRuntime(t *testing.T) {
+	t.Setenv("MANAGEMENT_PASSWORD", "")
+
+	authDir := t.TempDir()
+	fileName := "prioritised.json"
+	filePath := filepath.Join(authDir, fileName)
+	store := fileauth.NewFileTokenStore()
+	store.SetBaseDir(authDir)
+	manager := coreauth.NewManager(store, nil, nil)
+	record := &coreauth.Auth{
+		ID:         fileName,
+		FileName:   fileName,
+		Provider:   "codex",
+		Attributes: map[string]string{"path": filePath},
+		Metadata:   map[string]any{"type": "codex"},
+	}
+	if _, errRegister := manager.Register(context.Background(), record); errRegister != nil {
+		t.Fatalf("Register() error = %v", errRegister)
+	}
+	h := NewHandlerWithoutConfigFilePath(&config.Config{AuthDir: authDir}, manager)
+
+	patch := func(priority string) *httptest.ResponseRecorder {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(rec)
+		body := `{"name":"prioritised.json","priority":` + priority + `}`
+		ctx.Request = httptest.NewRequest(http.MethodPatch, "/v8/management/credentials/fields", strings.NewReader(body))
+		ctx.Request.Header.Set("Content-Type", "application/json")
+		h.PatchAuthFileFields(ctx)
+		return rec
+	}
+	persisted := func() map[string]any {
+		t.Helper()
+		raw, errRead := os.ReadFile(filePath)
+		if errRead != nil {
+			t.Fatalf("ReadFile() error = %v", errRead)
+		}
+		var data map[string]any
+		if errUnmarshal := json.Unmarshal(raw, &data); errUnmarshal != nil {
+			t.Fatalf("Unmarshal() error = %v", errUnmarshal)
+		}
+		return data
+	}
+
+	if rec := patch("7"); rec.Code != http.StatusOK {
+		t.Fatalf("set status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if data := persisted(); data["priority"] != float64(7) {
+		t.Fatalf("persisted priority = %#v, want 7", data["priority"])
+	}
+	updated, _ := manager.GetByID(fileName)
+	if updated.Attributes["priority"] != "7" || h.buildAuthFileEntry(updated)["priority"] != 7 {
+		t.Fatalf("runtime priority = %q, want 7", updated.Attributes["priority"])
+	}
+
+	for _, priority := range []string{"1.5", "1001", "-1001", "1e2", `"high"`, "true", "{}"} {
+		if rec := patch(priority); rec.Code != http.StatusBadRequest {
+			t.Fatalf("priority %s status = %d, want 400; body=%s", priority, rec.Code, rec.Body.String())
+		}
+	}
+	rec := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(rec)
+	ctx.Request = httptest.NewRequest(http.MethodPatch, "/v8/management/credentials/fields", strings.NewReader(`{"name":"prioritised.json","priority.x":1}`))
+	h.PatchAuthFileFields(ctx)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("nested priority status = %d, want 400", rec.Code)
+	}
+	if data := persisted(); data["priority"] != float64(7) {
+		t.Fatalf("a rejected patch changed the file: %#v", data["priority"])
+	}
+
+	if rec := patch("-1000"); rec.Code != http.StatusOK {
+		t.Fatalf("lower bound status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if rec := patch("null"); rec.Code != http.StatusOK {
+		t.Fatalf("clear status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if _, exists := persisted()["priority"]; exists {
+		t.Fatal("persisted priority remains after null")
+	}
+	updated, _ = manager.GetByID(fileName)
+	if _, exists := updated.Attributes["priority"]; exists {
+		t.Fatal("runtime priority remains after null")
+	}
+}
+
 func TestPatchAuthFileFields_RequestRetryRoundTrip(t *testing.T) {
 	t.Setenv("MANAGEMENT_PASSWORD", "")
 

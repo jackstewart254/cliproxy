@@ -254,6 +254,9 @@ func applyAuthDisabledState(auth *coreauth.Auth, disabled bool) {
 	auth.Metadata["disabled"] = disabled
 }
 
+// authFilePriorityLimit bounds the priority PatchAuthFileFields accepts.
+const authFilePriorityLimit = 1000
+
 // PatchAuthFileFields updates arbitrary metadata fields of an auth file.
 func (h *Handler) PatchAuthFileFields(c *gin.Context) {
 	if h.authManager == nil {
@@ -382,6 +385,20 @@ func (h *Handler) PatchAuthFileFields(c *gin.Context) {
 			}
 		} else if rootAuthFileField(fieldPath) == coreauth.AttributeWeight {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "weight does not support nested fields"})
+			return
+		} else if fieldPath == "priority" {
+			if value == nil {
+				delete(targetAuth.Metadata, "priority")
+			} else {
+				priority, okPriority := authFileIntValue(value)
+				if !okPriority || priority < -authFilePriorityLimit || priority > authFilePriorityLimit {
+					c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("priority must be a whole number from -%d to %d, or null", authFilePriorityLimit, authFilePriorityLimit)})
+					return
+				}
+				targetAuth.Metadata["priority"] = priority
+			}
+		} else if rootAuthFileField(fieldPath) == "priority" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "priority does not support nested fields"})
 			return
 		} else if fieldPath == "headers" {
 			applyAuthFileHeadersPatch(targetAuth, value)

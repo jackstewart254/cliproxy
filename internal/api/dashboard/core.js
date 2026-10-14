@@ -1031,9 +1031,12 @@ export async function api(path, opts = {}) {
   return body;
 }
 
+// A custom priority survives a mode change that keeps its sign: Reserve is
+// any priority below zero, Rotation zero or above.
 export async function setMode(acct, want) {
+  const p = acct.priority || 0;
   await api("/credentials/status", { method: "PATCH", body: JSON.stringify({ name: acct.name || acct.id, disabled: want === "off" }) });
-  if (want !== "off") await api("/credentials/fields", { method: "PATCH", body: JSON.stringify({ name: acct.name || acct.id, priority: want === "reserve" ? -1 : 0 }) });
+  if (want !== "off") await api("/credentials/fields", { method: "PATCH", body: JSON.stringify({ name: acct.name || acct.id, priority: want === "reserve" ? (p < 0 ? p : -1) : Math.max(0, p) }) });
 }
 
 export const MODES = [
@@ -1054,27 +1057,44 @@ export async function write(fn, done) {
   window.dispatchEvent(new Event("dash:refresh"));
 }
 
-// Mode and plan-date menus shared by Accounts and Account details.
+// Mode, plan-date and priority menus shared by Accounts and Account details.
 export function modeMenu(anchor, acct) {
   menu(anchor, MODES.map((m) => ({ a: m.a, b: m.b, on: acct.mode === m.id, run: () => { if (m.id !== acct.mode) write(() => setMode(acct, m.id), acct.email + ": " + m.a); } })));
 }
 
-export function planMenu(anchor, acct, extra = []) {
-  const p = plan(acct);
-  const field = (key, label, value, hint) => ({
-    html: `<div class="field"><label>${esc(label)}</label><div class="inline"><input class="input" type="date" value="${esc(value)}" data-k="${key}" style="flex:1"><button class="btn outline" data-save="${key}">Save</button></div>${hint ? `<span class="muted">${esc(hint)}</span>` : ""}</div>`,
+// One saved field of an account's auth file: a date, or a whole number.
+function accountField(acct, key, label, value, hint, type = "date") {
+  return {
+    html: `<div class="field"><label>${esc(label)}</label><div class="inline"><input class="input" type="${type}"${type === "number" ? ` step="1" min="-1000" max="1000" placeholder="0"` : ""} value="${esc(value)}" data-k="${key}" style="flex:1"><button class="btn outline" data-save="${key}">Save</button></div>${hint ? `<span class="muted">${esc(hint)}</span>` : ""}</div>`,
     mount: (el) => {
       el.querySelector("[data-save]").onclick = () => {
-        const v = el.querySelector("input").value;
+        const input = el.querySelector("input");
+        if (input.validity.badInput) return toast(label + " must be a " + (type === "number" ? "whole number" : "date"), true);
+        const v = input.value.trim();
         closeMenu();
-        write(() => api("/credentials/fields", { method: "PATCH", body: JSON.stringify({ name: acct.name || acct.id, [key]: v || null }) }), v ? label + " set to " + planDay(v) : label + " cleared");
+        const sent = !v ? null : type === "number" ? Number(v) : v;
+        write(() => api("/credentials/fields", { method: "PATCH", body: JSON.stringify({ name: acct.name || acct.id, [key]: sent }) }), v ? label + " set to " + (type === "number" ? v : planDay(v)) : label + " cleared");
       };
     },
-  });
+  };
+}
+
+function priorityField(acct) {
+  const ties = S.data?.routing?.strategy === "fill-first" ? "Equal priorities go alphabetically by account file." : "Equal priorities follow the routing order.";
+  return accountField(acct, "priority", "Priority", acct.priority || 0, "Higher is used first. " + ties + " Empty resets it to 0.", "number");
+}
+
+export function priorityMenu(anchor, acct) {
+  menu(anchor, [priorityField(acct)], { width: 280 });
+}
+
+export function planMenu(anchor, acct, extra = []) {
+  const p = plan(acct);
   menu(anchor, [
     ...extra,
     ...(extra.length ? ["sep"] : []),
-    field("plan_renews_on", "Plan renews on", p.source === "manual" ? p.renews : "", p.source === "token" && p.renews ? "From the sign-in token: " + planDay(p.renews) + ". Set a date to override it." : "The day the subscription bills again."),
-    field("plan_ends_on", "Plan ends on", p.ends, "Set this when you have cancelled. Leave empty while it renews."),
+    accountField(acct, "plan_renews_on", "Plan renews on", p.source === "manual" ? p.renews : "", p.source === "token" && p.renews ? "From the sign-in token: " + planDay(p.renews) + ". Set a date to override it." : "The day the subscription bills again."),
+    accountField(acct, "plan_ends_on", "Plan ends on", p.ends, "Set this when you have cancelled. Leave empty while it renews."),
+    priorityField(acct),
   ], { width: 280 });
 }
