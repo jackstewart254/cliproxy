@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -288,32 +287,6 @@ func GetOAuthSession(state string) (provider string, status string, ok bool) {
 		return "", "", false
 	}
 	return session.Provider, session.Status, true
-}
-
-// PendingOAuthProviders lists the providers with a sign-in waiting for its
-// browser callback, without the states that would let a caller complete one.
-func PendingOAuthProviders() []string {
-	return oauthSessions.PendingProviders()
-}
-
-// PendingProviders returns each provider with a pending session once, sorted.
-func (s *oauthSessionStore) PendingProviders() []string {
-	now := time.Now()
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.purgeExpiredLocked(now)
-	seen := make(map[string]bool)
-	providers := []string{}
-	for _, session := range s.sessions {
-		provider := strings.ToLower(strings.TrimSpace(session.Provider))
-		if session.Completed || session.Status != "" || provider == "" || seen[provider] {
-			continue
-		}
-		seen[provider] = true
-		providers = append(providers, provider)
-	}
-	sort.Strings(providers)
-	return providers
 }
 
 func GetOAuthSessionDetails(state string) (provider string, status string, isPlugin bool, metadata map[string]any, completed bool, ok bool) {

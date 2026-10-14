@@ -591,6 +591,14 @@ export function inDays(n) {
   return "In " + n + " days";
 }
 
+// "just now", "4m ago", "2h ago" or "3d ago".
+export function ago(t) {
+  const m = Math.floor((Date.now() - toMs(t)) / 60e3);
+  if (m < 1) return "just now";
+  if (m < 60) return m + "m ago";
+  return m < 48 * 60 ? Math.floor(m / 60) + "h ago" : Math.floor(m / 1440) + "d ago";
+}
+
 // "Now", "15:38", or "Sun 4 Oct" for older.
 export function seen(t) {
   if (!t) return "";
@@ -686,6 +694,31 @@ const rollForward = (t, windowMs) => {
   return t;
 };
 
+// A reading's number, or NaN when it is missing: Number("") and Number(null)
+// are 0, which would read as nothing used.
+const num = (v) => (v === "" || v == null ? NaN : Number(v));
+
+// Idle accounts are probed every 20 minutes, so a reading older than this
+// means readings are not arriving.
+export const STALE_MS = 30 * 60e3;
+
+// Marks an item with when it was read and whether that is older than STALE_MS.
+export function stamp(item, iso) {
+  if (!item) return null;
+  const at = validTime(iso) ? Date.parse(iso) : 0;
+  return Object.assign(item, { observed: at, stale: !!at && Date.now() - at > STALE_MS });
+}
+
+// An item without a used share shows as No reading, not as 100% left.
+const known = (item) => (item && Number.isFinite(item.used) ? item : null);
+
+// A limits() item's reading age as markup: a title attribute ("Read 2h ago"),
+// and once the reading is stale a short note ("· 2h") to show beside it.
+export function ageParts(item) {
+  const age = item?.observed ? ago(item.observed) : "";
+  return { title: age ? ` title="Read ${age}"` : "", note: item?.stale && age ? "· " + age.replace(/ ago$/, "") : "" };
+}
+
 export function primeSet() {
   return new Set((S.data?.routing?.prime_after_reset || []).map((p) => String(p).toLowerCase()));
 }
@@ -700,50 +733,53 @@ function weekItem(provider, used, reset, windowMs) {
 }
 
 // Limits from the router's meters (per-model weeks, survive restarts), else
-// from the credential's last quota headers.
+// from the credential's last quota headers. Items carry when they were read.
 export function limits(acct) {
   const meters = S.data?.router?.accounts?.[acct.id]?.meters;
   const out = { week: null, short: null, extra: [] };
   if (meters && meters.length) {
     for (const m of meters) {
       const reset = validTime(m.reset_at) ? Date.parse(m.reset_at) : 0;
-      const item = { used: (Number(m.utilization) || 0) * 100, reset: reset > Date.now() ? reset : 0, burn: m.burn_per_hour > 0 ? m.burn_per_hour * 100 : 0, title: m.title };
+      const item = stamp({ used: num(m.utilization) * 100, reset: reset > Date.now() ? reset : 0, burn: m.burn_per_hour > 0 ? m.burn_per_hour * 100 : 0, title: m.title }, m.observed_at);
       if (m.long && m.reset_since_reading && primeSet().has(acct.provider)) Object.assign(item, { used: 0, reset: 0, notStarted: true });
+      if (!known(item)) continue;
       if ((m.name === "7d" || m.name === "secondary") && !out.week) out.week = item;
       else if ((m.name === "5h" || m.name === "primary") && !out.short) out.short = item;
       else out.extra.push(item);
     }
     if (out.week || out.short) return out;
   }
-  return signalLimits(acct, out);
+  const sl = signalLimits(acct, out);
+  return { ...sl, week: known(sl.week), short: known(sl.short) };
 }
 
 // Limits from the credential's last quota headers. This is what the live
-// soonest-reset router reads, so the queue order uses it.
+// soonest-reset router reads, so the queue order uses it. Like the router it
+// keeps a reset time that came without a used share; that item's used is NaN.
 export function signalLimits(acct, out = { week: null, short: null, extra: [] }) {
   const q = acct.quota || {};
   const s = q.signals || {};
   if (acct.provider === "claude") {
     const w = sig(s, "Anthropic-Ratelimit-Unified-7d-Utilization");
     const wr = resetTime(sig(s, "Anthropic-Ratelimit-Unified-7d-Reset"));
-    if (w || wr) out.week = weekItem("claude", Number(w) * 100, wr, 7 * 864e5);
+    if (w || wr) out.week = stamp(weekItem("claude", num(w) * 100, wr, 7 * 864e5), q.observed_at);
     const f = sig(s, "Anthropic-Ratelimit-Unified-5h-Utilization");
     const fr = resetTime(sig(s, "Anthropic-Ratelimit-Unified-5h-Reset"));
-    if (f || fr) out.short = { used: Number(f) * 100, reset: fr > Date.now() ? fr : 0 };
+    if (f || fr) out.short = stamp({ used: num(f) * 100, reset: fr > Date.now() ? fr : 0 }, q.observed_at);
   } else if (acct.provider === "codex") {
     for (const p of ["X-Codex-Primary-", "X-Codex-Secondary-"]) {
       const minutes = Number(sig(s, p + "Window-Minutes"));
       if (!minutes) continue;
       const reset = resetTime(sig(s, p + "Reset-At"), q.observed_at, sig(s, p + "Reset-After-Seconds"));
-      const used = Number(sig(s, p + "Used-Percent"));
-      if (minutes >= 6 * 24 * 60) out.week = weekItem("codex", used, reset, minutes * 6e4);
-      else out.short = { used, reset: reset > Date.now() ? reset : 0 };
+      const used = num(sig(s, p + "Used-Percent"));
+      if (minutes >= 6 * 24 * 60) out.week = stamp(weekItem("codex", used, reset, minutes * 6e4), q.observed_at);
+      else out.short = stamp({ used, reset: reset > Date.now() ? reset : 0 }, q.observed_at);
     }
   }
   return out;
 }
 
-export const left = (item) => (item ? Math.max(0, Math.min(100, 100 - (Number.isFinite(item.used) ? item.used : 0))) : null);
+export const left = (item) => (item && Number.isFinite(item.used) ? Math.max(0, Math.min(100, 100 - item.used)) : null);
 
 export function accounts() {
   const list = (S.data?.accounts || []).map((a) => {
@@ -775,7 +811,7 @@ export function status(acct) {
   const retry = validTime(acct.next_retry_after) ? Date.parse(acct.next_retry_after) : 0;
   const lim = limits(acct);
   if (retry && retry > Date.now()) {
-    const weekGone = (lim.week && left(lim.week) <= 0) || retry - Date.now() > 6 * 3600e3;
+    const weekGone = left(lim.week) === 0 || retry - Date.now() > 6 * 3600e3;
     return weekGone ? { kind: "usedup", text: "Used up", until: retry } : { kind: "limited", text: "Resting until " + clock(retry), until: retry };
   }
   const msg = String(acct.status_message || "");
@@ -784,7 +820,7 @@ export function status(acct) {
     return { kind: "error", text: msg ? "Error" : "Error", detail: msg };
   }
   if (acct.unavailable) return { kind: "limited", text: "Unavailable" };
-  if (lim.week && left(lim.week) <= 0) return { kind: "usedup", text: "Used up" };
+  if (left(lim.week) === 0) return { kind: "usedup", text: "Used up" };
   return { kind: "ready", text: "Ready" };
 }
 
@@ -896,10 +932,13 @@ export function email(addr) {
 export const pill = (text, cls = "") => `<span class="pill ${cls}">${esc(text)}</span>`;
 export const warnState = (text, cls = "") => `<span class="state ${cls}" title="${esc(text)}">${warnIcon(14)}<span class="clamp">${esc(text)}</span></span>`;
 
-export function meterCell(pctLeft, color = "") {
+// item, a limits() item, adds its reading's age (ageParts), on a muted cell
+// once the reading is stale.
+export function meterCell(pctLeft, color = "", item = null) {
   if (pctLeft == null) return "";
   const p = Math.max(0, Math.min(100, pctLeft));
-  return `<span class="metercell"><span class="meter"><i style="width:${p}%${color ? ";background:" + color : ""}"></i></span><span class="${p <= 0 ? "muted" : ""}">${Math.round(p)}%</span></span>`;
+  const age = ageParts(item);
+  return `<span class="metercell${item?.stale ? " stale" : ""}"${age.title}><span class="meter"><i style="width:${p}%${color ? ";background:" + color : ""}"></i></span><span class="${p <= 0 ? "muted" : ""}">${Math.round(p)}%</span>${age.note ? `<span>${age.note}</span>` : ""}</span>`;
 }
 
 export function seg(items, active, attr, cls = "") {
@@ -909,7 +948,10 @@ export function seg(items, active, attr, cls = "") {
 // cols: [{label, w (px) or grow, r (right aligned), cls}]; rows: [{cells: [html], href, cls, attrs}]
 export function table(cols, rows, opts = {}) {
   const cell = (c, html, i) => {
-    const style = c.w ? `style="width:${c.w}px;flex:0 0 ${c.w}px"` : "";
+    // opts.fit lets sized columns shrink to c.min (default 70%) instead of scrolling sideways.
+    const style = !c.w ? "" : opts.fit
+      ? `style="width:${c.w}px;flex:0 1 ${c.w}px;min-width:${c.min ?? Math.round(c.w * 0.7)}px"`
+      : `style="width:${c.w}px;flex:0 0 ${c.w}px"`;
     return `<div class="c ${c.w ? "" : "g"} ${c.r ? "r" : ""} ${c.cls || ""}" ${style}>${html ?? ""}</div>`;
   };
   const head = opts.noHead ? "" : `<div class="tr head">${cols.map((c, i) => cell(c, esc(c.label || ""), i)).join("")}</div>`;
@@ -920,7 +962,7 @@ export function table(cols, rows, opts = {}) {
     return `<${tag} class="tr ${r.cls || ""}"${href} ${r.attrs || ""}>${cols.map((c, i) => cell(c, r.cells[i], i)).join("")}</${tag}>`;
   }).join("");
   const empty = !rows.length && opts.empty ? `<div class="empty">${esc(opts.empty)}</div>` : "";
-  return `<div class="tblwrap"><div class="tbl">${head}${body}</div></div>${empty}`;
+  return `<div class="tblwrap ${opts.cls || ""}"><div class="tbl">${head}${body}</div></div>${empty}`;
 }
 
 export function figure(label, value, unit = "", opts = {}) {
@@ -1031,10 +1073,31 @@ export async function api(path, opts = {}) {
   return body;
 }
 
+// A custom priority survives a mode change that keeps its sign: Reserve is
+// any priority below zero, Rotation zero or above.
 export async function setMode(acct, want) {
+  const p = acct.priority || 0;
   await api("/credentials/status", { method: "PATCH", body: JSON.stringify({ name: acct.name || acct.id, disabled: want === "off" }) });
-  if (want !== "off") await api("/credentials/fields", { method: "PATCH", body: JSON.stringify({ name: acct.name || acct.id, priority: want === "reserve" ? -1 : 0 }) });
+  if (want !== "off") await api("/credentials/fields", { method: "PATCH", body: JSON.stringify({ name: acct.name || acct.id, priority: want === "reserve" ? (p < 0 ? p : -1) : Math.max(0, p) }) });
 }
+
+// One provider's accounts in the order the scheduler picks them: enabled
+// accounts by priority high to low, then auth ID in byte order. Fill-first
+// uses one at a time, so each gets its own rank; other strategies rotate
+// equal priorities, so those share a rank (1, 1, 3). `after` is the rank
+// used just before (0 for the first). Off accounts get rank 0, last.
+export function routingOrder(list, strategy = S.data?.routing?.strategy) {
+  const off = (a) => a.disabled || a.mode === "off";
+  const on = list.filter((a) => !off(a)).sort((a, b) => b.priority - a.priority || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  let rank = 0, after = 0;
+  const ranked = on.map((a, i) => {
+    if (strategy === "fill-first" || !i || a.priority !== on[i - 1].priority) { after = rank; rank = i + 1; }
+    return { ...a, rank, after };
+  });
+  return [...ranked, ...list.filter(off).map((a) => ({ ...a, rank: 0, after: 0 }))];
+}
+
+export const rankTitle = (a) => (!a.rank ? "Off, never used" : a.after ? "Used after #" + a.after : "Used first");
 
 export const MODES = [
   { id: "rotation", a: "Rotation", b: "Takes new sessions" },
@@ -1054,27 +1117,52 @@ export async function write(fn, done) {
   window.dispatchEvent(new Event("dash:refresh"));
 }
 
-// Mode and plan-date menus shared by Accounts and Account details.
+// Mode, plan-date and rank menus shared by Accounts and Account details.
 export function modeMenu(anchor, acct) {
   menu(anchor, MODES.map((m) => ({ a: m.a, b: m.b, on: acct.mode === m.id, run: () => { if (m.id !== acct.mode) write(() => setMode(acct, m.id), acct.email + ": " + m.a); } })));
 }
 
-export function planMenu(anchor, acct, extra = []) {
-  const p = plan(acct);
-  const field = (key, label, value, hint) => ({
+// One saved date field of an account's auth file.
+function accountField(acct, key, label, value, hint) {
+  return {
     html: `<div class="field"><label>${esc(label)}</label><div class="inline"><input class="input" type="date" value="${esc(value)}" data-k="${key}" style="flex:1"><button class="btn outline" data-save="${key}">Save</button></div>${hint ? `<span class="muted">${esc(hint)}</span>` : ""}</div>`,
     mount: (el) => {
       el.querySelector("[data-save]").onclick = () => {
-        const v = el.querySelector("input").value;
+        const input = el.querySelector("input");
+        if (input.validity.badInput) return toast(label + " must be a date", true);
+        const v = input.value.trim();
         closeMenu();
         write(() => api("/credentials/fields", { method: "PATCH", body: JSON.stringify({ name: acct.name || acct.id, [key]: v || null }) }), v ? label + " set to " + planDay(v) : label + " cleared");
       };
     },
-  });
+  };
+}
+
+// The account's place among its provider's enabled accounts. The proxy moves
+// it there and renumbers the priorities behind it, so no raw number shows.
+export function rankMenu(anchor, acct) {
+  const on = routingOrder(accounts().filter((a) => a.provider === acct.provider)).filter((a) => a.rank);
+  const at = on.findIndex((a) => a.id === acct.id) + 1;
+  const note = (text) => ({ html: `<div class="field"><label>Rank</label><span class="muted">${esc(text)}</span></div>` });
+  if (!at) return menu(anchor, [note("Off accounts are never used. Switch it to Rotation or Reserve to give it a place.")], { width: 280 });
+  menu(anchor, [
+    note("The others shift to make room. Reserve accounts always come after Rotation ones."),
+    ...on.map((_, i) => ({
+      a: i + 1 + (!i ? " — used first" : i === on.length - 1 ? " — used last" : ""),
+      on: i + 1 === at,
+      run: () => { if (i + 1 !== at) write(() => api("/credentials/rank", { method: "PATCH", body: JSON.stringify({ name: acct.name || acct.id, rank: i + 1 }) }), acct.email + " moved to #" + (i + 1)); },
+    })),
+  ], { width: 280 });
+}
+
+export function planMenu(anchor, acct, extra = []) {
+  const p = plan(acct);
   menu(anchor, [
     ...extra,
     ...(extra.length ? ["sep"] : []),
-    field("plan_renews_on", "Plan renews on", p.source === "manual" ? p.renews : "", p.source === "token" && p.renews ? "From the sign-in token: " + planDay(p.renews) + ". Set a date to override it." : "The day the subscription bills again."),
-    field("plan_ends_on", "Plan ends on", p.ends, "Set this when you have cancelled. Leave empty while it renews."),
+    accountField(acct, "plan_renews_on", "Plan renews on", p.source === "manual" ? p.renews : "", p.source === "token" && p.renews ? "From the sign-in token: " + planDay(p.renews) + ". Set a date to override it." : "The day the subscription bills again."),
+    accountField(acct, "plan_ends_on", "Plan ends on", p.ends, "Set this when you have cancelled. Leave empty while it renews."),
+    "sep",
+    { a: "Change rank", run: () => rankMenu(anchor, acct) },
   ], { width: 280 });
 }

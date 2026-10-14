@@ -230,6 +230,8 @@ svg { display: block; flex-shrink: 0; }
 .meter { width: 64px; height: 6px; border-radius: 999px; background: var(--surface-2); overflow: hidden; flex-shrink: 0; }
 .meter i { display: block; height: 100%; border-radius: 999px; background: var(--chart-1); }
 .metercell { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.metercell.stale, .pctcell.stale { color: var(--muted-fg); }
+.metercell.stale .meter i, .pctcell.stale .meter i { opacity: 0.5; }
 .bigbar { height: 8px; border-radius: 999px; background: var(--surface-2); overflow: hidden; display: flex; }
 .bigbar i { display: block; height: 100%; background: var(--chart-1); }
 
@@ -374,6 +376,20 @@ svg { display: block; flex-shrink: 0; }
 .sech .t b { font-size: 13px; font-weight: 500; white-space: nowrap; }
 .tblwrap { overflow-x: auto; }
 .tbl { min-width: max-content; width: 100%; }
+/* Accounts fits its panel: sized columns shrink to a floor (table fit option)
+   and the account column truncates. Narrower panels drop columns, least useful
+   first: Plan renews (it stays in each account's … menu), then reset day and
+   requests, then the 5-hour meter and Mode (both on Account details). */
+.tblwrap.acctbl { container-type: inline-size; }
+.tblwrap.acctbl .tbl { min-width: 0; }
+.acctbl .tr { gap: 12px; }
+.acctbl .tr .c { overflow: hidden; white-space: nowrap; }
+.acctbl .tr .c.g { min-width: 120px; }
+.acctbl .tr.head .c { white-space: normal; line-height: 14px; }
+.acctbl .meter { width: auto; flex: 1 1 64px; min-width: 24px; }
+@container (max-width: 860px) { .acctbl .c.plancol { display: none; } }
+@container (max-width: 700px) { .acctbl .c.resetcol, .acctbl .c.reqcol { display: none; } }
+@container (max-width: 520px) { .acctbl .c.shortcol, .acctbl .c.modecol { display: none; } }
 .tr { display: flex; align-items: center; gap: 16px; height: 48px; padding: 0 24px; border-bottom: 1px solid var(--row-line); font-size: 13px; }
 .tr.head { height: 32px; background: var(--canvas); border-top: 1px solid var(--hairline); border-bottom: 1px solid var(--hairline); font-size: 12px; color: var(--muted-fg); }
 .tr.group { height: 44px; }
@@ -920,6 +936,7 @@ a.tr:hover, .tr.click:hover { background: var(--hover); cursor: pointer; }
 .ttbl .tr.earlier { color: var(--muted-fg); }
 .ttbl .lead { width: 32px; flex-shrink: 0; display: flex; align-items: center; gap: 8px; }
 .ttbl .meter { width: 64px; }
+.ttbl .pctcell.stale .meter { width: 40px; } /* room for the age in Week left */
 .ttbl .meter.reuse { border-radius: 3px; }
 .ttbl .meter.reuse i { border-radius: 3px; background: var(--chart-p90); }
 .ttbl .pctcell { display: flex; align-items: center; gap: 8px; }

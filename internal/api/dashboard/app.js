@@ -63,10 +63,7 @@ let focusKey = "";
 let navSig = "";
 
 function hostName() {
-  const h = S.data?.server?.host;
-  if (h) return h;
-  const n = location.hostname.split(".")[0];
-  return /^\d+$/.test(n) || n === "localhost" ? "This machine" : n;
+  return S.data?.server?.host || "This machine";
 }
 
 function shell() {
@@ -77,7 +74,7 @@ function shell() {
       <div class="spacer"></div>
       <div class="nav foot only-wide">
         <a href="#/settings" data-nav="settings">${icon("settings")}<span>Settings</span></a>
-        <div class="host">${icon("server")}<span id="hostname"></span><span class="muted">Tailnet</span></div>
+        <div class="host">${icon("server")}<span id="hostname"></span></div>
       </div>
     </aside>
     <main class="main" id="main"></main>`;

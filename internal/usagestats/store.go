@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"sort"
@@ -20,7 +21,6 @@ import (
 
 	internallogging "github.com/router-for-me/CLIProxyAPI/v8/internal/logging"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/redisqueue"
-	"github.com/router-for-me/CLIProxyAPI/v8/internal/tailnetname"
 	coreusage "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/usage"
 	log "github.com/sirupsen/logrus"
 )
@@ -72,7 +72,7 @@ type Session struct {
 	ParentID string `json:"parent_id"`
 	Provider string `json:"provider"`
 	// Title and Machine come from POST /dashboard/sessions; Machine falls back
-	// to the tailnet name of the client address. Both are filled in by Summary.
+	// to this host's name for a loopback client. Both are filled in by Summary.
 	Title         string                `json:"title"`
 	Machine       string                `json:"machine"`
 	Model         string                `json:"model"`
@@ -163,8 +163,7 @@ type Store struct {
 	// saveFile writes a snapshot to the stats file path.
 	saveFile func(path string, data []byte) error
 	nowFunc  func() time.Time
-	// machineName maps a client address to a short machine name. It must not
-	// block.
+	// machineName maps a client address to a short machine name.
 	machineName func(ip string) string
 	stopOnce    sync.Once
 	stop        chan struct{}
@@ -190,12 +189,30 @@ func newStore() *Store {
 		fallback:      defaultFallback(),
 		saveFile:      writeFileAtomic,
 		nowFunc:       time.Now,
-		machineName:   tailnetname.MachineName,
+		machineName:   localMachineName,
 	}
 }
 
 // Default returns the process-wide store.
 func Default() *Store { return defaultStore }
+
+// localMachineName is this host's name for a loopback client address, else "".
+func localMachineName(ip string) string {
+	if parsed := net.ParseIP(strings.TrimSpace(ip)); parsed != nil && parsed.IsLoopback() {
+		return HostName()
+	}
+	return ""
+}
+
+// HostName is this host's short name, or "" when the OS does not say.
+func HostName() string {
+	host, errHost := os.Hostname()
+	if errHost != nil {
+		return ""
+	}
+	name, _, _ := strings.Cut(host, ".")
+	return name
+}
 
 // Configure sets the persistence file, loads any saved state and starts the
 // periodic flush. Calling it again with the same path is a no-op.
@@ -348,12 +365,8 @@ func (s *Store) recordFrom(record coreusage.Record, clientIP string) {
 			if model := strings.TrimSpace(record.Model); model != "" {
 				session.Model = model
 			}
-			if clientIP != "" && clientIP != session.ClientIP {
+			if clientIP != "" {
 				session.ClientIP = clientIP
-				if s.machineName != nil {
-					// Starts the background name lookup so Summary finds it cached.
-					s.machineName(clientIP)
-				}
 			}
 			session.LastSeen = at
 		}

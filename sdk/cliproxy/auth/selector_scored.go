@@ -232,6 +232,11 @@ func (s *ScoredSelector) assess(auth *Auth, model string, activeSessions int, no
 				return candidate
 			}
 		}
+		// An unknown used share is neither empty nor full: leave it out, as if
+		// the meter had no reading.
+		if effective.UtilizationUnknown {
+			continue
+		}
 		switch {
 		case meterIsLong(&effective):
 			long = append(long, effective)

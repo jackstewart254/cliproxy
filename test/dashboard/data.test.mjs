@@ -277,3 +277,75 @@ test('a padded reply is exact for its figure window only, and sums the window fr
   assert.equal(f.requests, 48);
   assert.equal(f.q, null);
 });
+
+test('a mode change keeps a custom priority that has the same sign', async () => {
+  const { setMode } = await import('../../internal/api/dashboard/core.js');
+  const sent = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => { sent.push(JSON.parse(opts.body)); return { ok: true, status: 200, json: async () => ({}) }; };
+  S.key = 'test';
+  const priorityAfter = async (acct, want) => { sent.length = 0; await setMode(acct, want); return sent.find((b) => 'priority' in b)?.priority; };
+  try {
+    assert.equal(await priorityAfter({ id: 'a', priority: 5, mode: 'off' }, 'rotation'), 5);
+    assert.equal(await priorityAfter({ id: 'a', priority: 5, mode: 'rotation' }, 'reserve'), -1);
+    assert.equal(await priorityAfter({ id: 'a', priority: -4, mode: 'off' }, 'reserve'), -4);
+    assert.equal(await priorityAfter({ id: 'a', priority: -4, mode: 'reserve' }, 'rotation'), 0);
+    assert.equal(await priorityAfter({ id: 'a', priority: 5, mode: 'rotation' }, 'off'), undefined);
+  } finally {
+    globalThis.fetch = realFetch;
+    S.key = '';
+  }
+});
+
+test('routing ranks follow the scheduler: priority high to low, then auth ID in byte order', async () => {
+  const { routingOrder, rankTitle } = await import('../../internal/api/dashboard/core.js');
+  const acct = (id, priority, mode = priority < 0 ? 'reserve' : 'rotation') => ({ id, priority, mode });
+  const list = [acct('c.json', 0), acct('off.json', 9, 'off'), acct('a.json', 0), acct('r.json', -1), acct('B.json', 0), acct('top.json', 10)];
+  const ff = routingOrder(list, 'fill-first');
+  // Byte order puts "B" before "a"; localeCompare would not.
+  assert.deepEqual(ff.map((a) => [a.id, a.rank]), [['top.json', 1], ['B.json', 2], ['a.json', 3], ['c.json', 4], ['r.json', 5], ['off.json', 0]]);
+  assert.equal(rankTitle(ff[0]), 'Used first');
+  assert.equal(rankTitle(ff[1]), 'Used after #1');
+  assert.equal(rankTitle(ff[4]), 'Used after #4');
+  assert.equal(rankTitle(ff[5]), 'Off, never used');
+  // Other strategies rotate equal priorities, so they share a rank.
+  const rr = routingOrder(list, 'round-robin');
+  assert.deepEqual(rr.map((a) => [a.id, a.rank]), [['top.json', 1], ['B.json', 2], ['a.json', 2], ['c.json', 2], ['r.json', 5], ['off.json', 0]]);
+  assert.equal(rankTitle(rr[4]), 'Used after #2');
+  assert.deepEqual(routingOrder([acct('x', 0), acct('y', 0), acct('z', -3)], 'round-robin').map((a) => a.rank), [1, 1, 3]);
+  // A disabled flag counts as Off whatever the mode says.
+  assert.equal(routingOrder([{ id: 'd', priority: 5, mode: 'rotation', disabled: true }], 'fill-first')[0].rank, 0);
+});
+
+test('a missing used share is no reading, and an old reading is marked stale with its age', async () => {
+  const { limits, left, meterCell } = await import('../../internal/api/dashboard/core.js');
+  const t0 = Date.now();
+  const claude = (signals) => ({ id: 'c', provider: 'claude', quota: { observed_at: iso(t0), signals } });
+  const meterAt = (utilization, observed) => ({ router: { accounts: { c: { meters: [{ name: '7d', utilization, reset_at: iso(t0 + DAY), observed_at: iso(observed), long: true }] } } } });
+  try {
+    // A reset header without a utilization is not 100% left.
+    S.data = { router: { accounts: {} } };
+    assert.equal(limits(claude({ 'Anthropic-Ratelimit-Unified-7d-Reset': String(Math.floor((t0 + DAY) / 1000)) })).week, null);
+    assert.equal(left({ used: NaN }), null);
+    // A reset that has passed still starts a fresh week.
+    const rolled = limits(claude({ 'Anthropic-Ratelimit-Unified-7d-Utilization': '0.4', 'Anthropic-Ratelimit-Unified-7d-Reset': String(Math.floor((t0 - HOUR) / 1000)) })).week;
+    assert.equal(left(rolled), 100);
+    // A meter without utilization is no reading either.
+    S.data = meterAt(null, t0);
+    assert.equal(limits(claude({})).week, null);
+    // Read five minutes ago: fresh, with its age in the tooltip only.
+    S.data = meterAt(0.25, t0 - 5 * 60e3);
+    let w = limits(claude({})).week;
+    assert.equal(w.stale, false);
+    assert.equal(left(w), 75);
+    assert.match(meterCell(left(w), '', w), /^<span class="metercell" title="Read 5m ago">/);
+    assert.doesNotMatch(meterCell(left(w), '', w), /· /);
+    // Read two hours ago: stale, muted, and the age shows.
+    S.data = meterAt(0.25, t0 - 2 * HOUR - 60e3);
+    w = limits(claude({})).week;
+    assert.equal(w.stale, true);
+    assert.match(meterCell(left(w), '', w), /^<span class="metercell stale" title="Read 2h ago">.*<span>· 2h<\/span><\/span>$/);
+  } finally {
+    S.data = {};
+  }
+});

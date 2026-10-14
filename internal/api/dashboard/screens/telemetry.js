@@ -3,7 +3,7 @@
 // range selection; the table under them sums the same buckets per account.
 import {
   S, esc, fmt, int, ms, money, clock, day, icon, logo, tokens, cacheReuse, apiCost,
-  providerTitle, accountScope, setAccountSelection, warnState,
+  providerTitle, accountScope, setAccountSelection, warnState, ageParts, stamp,
 } from "../core.js";
 import { accountColor, readAt } from "./common.js";
 import { accountPicker, bindAccountPicker } from "./account-picker.js";
@@ -119,7 +119,11 @@ export const COLUMNS = {
 const SEL_COLS = { leftAt: { w: 120 }, usedIn: { label: "Used in range", w: 140 }, resetsIn: { label: "Resets in range", w: 510 } };
 
 const cell = (w, html, r = false, cls = "") => `<div class="c ${r ? "r" : ""} ${cls}" style="width:${w}px">${html}</div>`;
-const meter = (pct, color, cls = "") => `<span class="pctcell"><span class="meter ${cls}"><i style="width:${Math.max(0, Math.min(100, pct))}%;background:${color}"></i></span><span class="${pct ? "" : "muted"}">${Math.round(pct)}%</span></span>`;
+// item, a stamped reading, adds its age (ageParts), muted once stale.
+const meter = (pct, color, cls = "", item = null) => {
+  const age = ageParts(item);
+  return `<span class="pctcell${item?.stale ? " stale" : ""}"${age.title}><span class="meter ${cls}"><i style="width:${Math.max(0, Math.min(100, pct))}%;background:${color}"></i></span><span class="${pct ? "" : "muted"}">${Math.round(pct)}%</span>${age.note ? `<span>${age.note}</span>` : ""}</span>`;
+};
 const reuseCell = (x) => { const r = cacheReuse(x); return r == null ? `<span class="muted">–</span>` : `<span class="pctcell"><span class="meter reuse"><i style="width:${Math.round(r)}%"></i></span><span class="muted">${Math.round(r)}%</span></span>`; };
 const perSec = (x) => (x ? (x < 10 ? x.toFixed(1) : String(Math.round(x))) + " tokens/s" : "–");
 
@@ -201,7 +205,7 @@ export function tableHtml(view, ctx) {
   };
 
   const allowCell = (l, c) => {
-    if (c.id === "weekLeft") return cell(c.w, meter(l.tr.usedUp ? 0 : l.tr.leftNow, l.color));
+    if (c.id === "weekLeft") return cell(c.w, meter(l.tr.usedUp ? 0 : l.tr.leftNow, l.color, "", stamp({}, l.ser.last_at)));
     if (c.id === "perDay") return cell(c.w, l.tr.rate == null ? dash : esc(pctRate(l.tr.rate * 24)));
     if (c.id === "heading") return cell(c.w, headingFor(l, now));
     if (c.id === "nextReset") return cell(c.w, l.tr.reset > now ? esc(fullTime(l.tr.reset)) : dash);

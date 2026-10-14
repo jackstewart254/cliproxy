@@ -2,6 +2,7 @@ package cliproxy
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -57,5 +58,28 @@ func TestClaudeMeterProbeReadsIdleOAuthAccountsOnly(t *testing.T) {
 	service.probeClaudeMeters(ctx)
 	if len(seen) != 1 {
 		t.Fatalf("probed again with a fresh reading: %v", seen)
+	}
+}
+
+// A probe that keeps failing is retried every minute; it is warned about at
+// most once per meterProbeMaxAge, even when the error text changes each time.
+func TestWarnProbeFailureIsRateLimited(t *testing.T) {
+	const id = "probe-warn.json"
+	defer probeWarnings.Delete(id)
+	start := time.Now()
+	steps := []struct {
+		err  error
+		at   time.Duration
+		want bool
+	}{
+		{errors.New("read tcp 10.0.0.2:53412->160.79.104.10:443: connection reset"), 0, true},
+		{errors.New("read tcp 10.0.0.2:53498->160.79.104.10:443: connection reset"), time.Minute, false},
+		{errors.New("usage endpoint returned Unauthorized"), 2 * time.Minute, false},
+		{errors.New("usage endpoint returned Unauthorized"), meterProbeMaxAge, true},
+	}
+	for i, step := range steps {
+		if got := warnProbeFailure(id, step.err, start.Add(step.at)); got != step.want {
+			t.Fatalf("step %d: warned = %v, want %v", i, got, step.want)
+		}
 	}
 }

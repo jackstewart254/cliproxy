@@ -78,7 +78,7 @@ func baseRevision(t *testing.T, engine *gin.Engine) int64 {
 
 func TestDashboardViewsRoundTrip(t *testing.T) {
 	_, engine, path := newViewsTestServer(t)
-	host := "desktop-home.tail.ts.net:8317"
+	host := "localhost:8317"
 
 	empty := viewsRequest(engine, http.MethodGet, "127.0.0.1:5000", host, "", "")
 	base := viewsClient{t: t, engine: engine}.revisionOf(empty)
@@ -87,11 +87,11 @@ func TestDashboardViewsRoundTrip(t *testing.T) {
 	}
 
 	stored := withRevision(testViewsBody, base+1)
-	put := viewsRequestIfMatch(engine, http.MethodPut, "100.65.36.120:5000", host, "http://"+host, ifMatch(base), testViewsBody)
+	put := viewsRequestIfMatch(engine, http.MethodPut, "127.0.0.1:5000", host, "http://"+host, ifMatch(base), testViewsBody)
 	if put.Code != http.StatusOK || strings.TrimSpace(put.Body.String()) != stored {
 		t.Fatalf("same-origin PUT: status %d body %s, want 200 and the stored body", put.Code, put.Body.String())
 	}
-	got := viewsRequest(engine, http.MethodGet, "100.65.36.120:5000", host, "", "")
+	got := viewsRequest(engine, http.MethodGet, "127.0.0.1:5000", host, "", "")
 	if got.Code != http.StatusOK || strings.TrimSpace(got.Body.String()) != stored {
 		t.Fatalf("GET after PUT: status %d body %s", got.Code, got.Body.String())
 	}
@@ -177,8 +177,8 @@ func TestDashboardViewsOriginMatchesSchemeHostAndPort(t *testing.T) {
 		overTLS            bool
 		want               int
 	}{
-		{"same http origin", "desktop-home.ts.net:8317", "http://desktop-home.ts.net:8317", false, http.StatusOK},
-		{"https page, http server", "desktop-home.ts.net:8317", "https://desktop-home.ts.net:8317", false, http.StatusForbidden},
+		{"same http origin", "dash.example:8317", "http://dash.example:8317", false, http.StatusOK},
+		{"https page, http server", "dash.example:8317", "https://dash.example:8317", false, http.StatusForbidden},
 		{"http page, https server", "dash.example", "http://dash.example", true, http.StatusForbidden},
 		{"same https origin", "dash.example", "https://dash.example", true, http.StatusOK},
 		{"https explicit 443 origin", "dash.example", "https://dash.example:443", true, http.StatusOK},
@@ -191,7 +191,7 @@ func TestDashboardViewsOriginMatchesSchemeHostAndPort(t *testing.T) {
 		{"other host", "127.0.0.1:8317", "http://localhost:8317", false, http.StatusForbidden},
 		{"host case", "Dash.Example:8317", "http://dash.example:8317", false, http.StatusOK},
 		{"ipv6 same", "[::1]:8317", "http://[::1]:8317", false, http.StatusOK},
-		{"ipv6 default port", "[fd7a:115c:a1e0::1]", "http://[FD7A:115C:A1E0::1]:80", false, http.StatusOK},
+		{"ipv6 default port", "[2001:db8::1]", "http://[2001:DB8::1]:80", false, http.StatusOK},
 		{"ipv6 other port", "[::1]:8317", "http://[::1]:9999", false, http.StatusForbidden},
 		{"ipv6 other address", "[::1]:8317", "http://[::2]:8317", false, http.StatusForbidden},
 		{"ipv6 without brackets", "[::1]:8317", "http://::1:8317", false, http.StatusForbidden},

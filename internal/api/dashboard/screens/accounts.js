@@ -2,7 +2,7 @@
 // #/accounts/add opens the Add account drawer over it.
 import {
   S, esc, int, icon, logo, email, pill, warnState, accounts, status, limits, left, queue, plan, planDay, day,
-  meterCell, table, modeMenu, planMenu, modeTitle, MODES, api, setMode, toast, fetchData, accountScope,
+  meterCell, table, modeMenu, planMenu, modeTitle, MODES, api, setMode, toast, fetchData, accountScope, routingOrder, rankTitle,
 } from "../core.js";
 import { accountPicker, bindAccountPicker } from "./account-picker.js";
 
@@ -30,27 +30,28 @@ function weekCells(a) {
   const w = lim.week, s = lim.short;
   if (st.kind === "off" || st.kind === "blocked" || st.kind === "error") return ["", "", ""];
   const resetAt = st.kind === "usedup" ? st.until || w?.reset : w?.reset;
-  const weekLeft = st.kind === "usedup" ? meterCell(0) : w ? (w.notStarted ? `<span class="muted">New week</span>` : meterCell(left(w))) : `<span class="muted">No reading</span>`;
-  const shortLeft = s && st.kind !== "usedup" ? meterCell(left(s)) : "";
+  const weekLeft = st.kind === "usedup" ? meterCell(0, "", w) : w ? (w.notStarted ? `<span class="muted">New week</span>` : meterCell(left(w), "", w)) : `<span class="muted">No reading</span>`;
+  const shortLeft = s && st.kind !== "usedup" ? meterCell(left(s), "", s) : "";
   return [weekLeft, resetAt ? esc(day(resetAt)) : "", shortLeft];
 }
 
 export function view(ctx) {
   const keep = new Set(accountScope().ids);
   const all = accounts();
-  const ordered = ["claude", "codex"].flatMap((p) => { const q = queue(p); return [...q.order, ...q.rest]; });
+  const ordered = ["claude", "codex"].flatMap((p) => routingOrder(all.filter((a) => a.provider === p)));
   const list = ordered.filter((a) => keep.has(a.id));
   const next = nextIds();
   const cols = [
-    { label: "", w: 16, cls: "ic" },
+    { label: "#", w: 20, min: 20 },
+    { label: "", w: 16, min: 16, cls: "ic" },
     { label: "Account" },
-    { label: "Week left", w: 120 },
-    { label: "Week resets", w: 104 },
-    { label: "Plan renews", w: 128 },
-    { label: "5 hours left", w: 120 },
-    { label: "Requests today", w: 96, r: true },
-    { label: "Mode", w: 104, cls: "modecol" },
-    { label: "", w: 20 },
+    { label: "Week left", w: 112 },
+    { label: "Week resets", w: 96, cls: "resetcol" },
+    { label: "Plan renews", w: 112, cls: "plancol" },
+    { label: "5 hours left", w: 112, cls: "shortcol" },
+    { label: "Requests today", w: 80, r: true, cls: "reqcol" },
+    { label: "Mode", w: 96, min: 84, cls: "modecol" },
+    { label: "", w: 20, min: 20 },
   ];
   const rows = list.map((a) => {
     const [wl, wr, sl] = weekCells(a);
@@ -59,6 +60,7 @@ export function view(ctx) {
       cls: "click",
       attrs: `data-href="#/accounts/${encodeURIComponent(a.id)}"`,
       cells: [
+        `<span class="${a.rank ? "" : "muted"}" title="${esc(rankTitle(a))}">${a.rank || "—"}</span>`,
         logo(a.provider),
         `${email(a.email)}${accountBadge(a, next)}`,
         wl, wr, planCell(a), sl,
@@ -71,7 +73,7 @@ export function view(ctx) {
   const html = `
     <div class="bar"><div class="end"><a class="btn" href="#/accounts/add">${icon("plus", 14, "var(--fg)")}Add account</a>${accountPicker()}</div></div>
     <div class="body">
-      ${table(cols, rows, { empty: "No accounts signed in yet." })}
+      ${table(cols, rows, { empty: "No accounts signed in yet.", fit: true, cls: "acctbl" })}
       <div class="tfoot">${list.length} of ${all.length}</div>
     </div>
     ${ctx.add ? drawer() : ""}`;
@@ -105,13 +107,13 @@ function drawer() {
   let body;
   if (st?.phase === "waiting") {
     const privacy = st.prov === "codex" ? "https://chatgpt.com/#settings/DataControls" : "https://claude.ai/settings/data-privacy-controls";
-    body = `<div class="note"><b>Finish signing in in the new tab.</b><span>Sign in as the account you want to add and click Authorize. On a Mac with the sign-in helper, the tab comes back to the dashboard by itself, and this page updates when the account is saved.</span><span>Then switch off model training on its <a class="strong" href="${privacy}" target="_blank" rel="noopener">privacy page</a>.</span></div>
+    body = `<div class="note"><b>Finish signing in in the new tab.</b><span>Sign in as the account you want to add and click Authorize. The tab then says sign-in worked and closes itself, and this page updates when the account is saved.</span><span>Then switch off model training on its <a class="strong" href="${privacy}" target="_blank" rel="noopener">privacy page</a>.</span></div>
       <div><label class="k">If the tab shows an error page after Authorize instead, copy its address and paste it here</label>
       <div class="row gap8"><input class="input grow" data-paste value="${esc(S.ui.addPaste || "")}" placeholder="http://localhost:.../callback?code=..."><button class="btn outline" data-submit>Send</button></div></div>`;
   } else if (st?.phase === "error") {
     body = `<div class="note"><b class="warn">${esc(st.title || "Sign-in did not finish.")}</b><span>${esc(st.msg)}</span></div>`;
   } else {
-    body = `<div class="muted">Sign in from home with no VPN on, as with cliproxy-login. The sign-in opens in a new tab.</div>`;
+    body = `<div class="muted">Sign in from home with no VPN on. The sign-in opens in a new tab.</div>`;
   }
   return `<div class="scrim" data-close></div>
   <div class="drawer" role="dialog" aria-label="Add account">

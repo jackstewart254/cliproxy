@@ -339,29 +339,65 @@ func (s *RoutingState) observeResult(result Result, headers http.Header, now tim
 	s.dirty = true
 }
 
-// mergeMeters folds observed meters into an account and its history.
+// mergeMeters folds observed meters into an account and its history. An
+// observation without a used share keeps the last known one, and its reading
+// time, and only refreshes the reset, window and any status it carries;
+// unless the stored window has ended, when the new one starts at zero.
 func mergeMeters(account *accountRouting, meters map[string]*Meter, model string, now time.Time) {
 	for name, observed := range meters {
 		existing := account.Meters[name]
 		if existing == nil {
-			existing = &Meter{Name: name}
+			existing = &Meter{Name: name, UtilizationUnknown: true}
 			account.Meters[name] = existing
 		}
-		existing.Utilization = observed.Utilization
+		if observed.UtilizationUnknown && windowRolled(existing, observed, now) {
+			// As in effectiveMeter, the new window starts at a known zero and no
+			// earlier status. The zero is recorded as a reading at the restart,
+			// when it was true, so the dashboard's age and the history agree.
+			restart := existing.ResetAt
+			if restart.After(now) {
+				restart = now
+			}
+			if restart.Before(existing.ObservedAt) {
+				restart = existing.ObservedAt
+			}
+			existing.Utilization, existing.UtilizationUnknown, existing.Status, existing.ObservedAt = 0, false, "", restart
+			account.History[name] = appendMeterSample(account.History[name], MeterSample{At: restart})
+		}
 		if !observed.ResetAt.IsZero() {
 			existing.ResetAt = observed.ResetAt
 		}
 		if observed.Window > 0 {
 			existing.Window = observed.Window
 		}
-		existing.Status = observed.Status
 		if observed.Label != "" {
 			existing.Label = observed.Label
 		}
-		existing.ObservedAt = now
 		existing.Models = addMeterModel(existing.Models, model)
+		if observed.UtilizationUnknown {
+			if observed.Status != "" {
+				existing.Status = observed.Status
+			}
+			continue
+		}
+		existing.Utilization, existing.UtilizationUnknown = observed.Utilization, false
+		existing.Status = observed.Status
+		existing.ObservedAt = now
 		account.History[name] = appendMeterSample(account.History[name], MeterSample{At: now, Utilization: observed.Utilization})
 	}
+}
+
+// windowRolled reports whether an observation at now belongs to a later
+// window than the stored meter: the stored reset has passed, or the observed
+// reset is at least half a window past it (reset headers drift by seconds).
+func windowRolled(existing, observed *Meter, now time.Time) bool {
+	if existing.ResetAt.IsZero() {
+		return false
+	}
+	if !existing.ResetAt.After(now) {
+		return true
+	}
+	return existing.Window > 0 && !observed.ResetAt.IsZero() && observed.ResetAt.Sub(existing.ResetAt) >= existing.Window/2
 }
 
 func appendMeterSample(samples []MeterSample, sample MeterSample) []MeterSample {

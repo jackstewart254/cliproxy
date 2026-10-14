@@ -17,6 +17,10 @@ type Meter struct {
 	Label string `json:"label,omitempty"`
 	// Utilization is the used share of the window, from 0 to 1.
 	Utilization float64 `json:"utilization"`
+	// UtilizationUnknown marks a meter whose responses carried a reset time or
+	// status but never a used share. It is false when known, so states saved
+	// before it existed load their utilization as known.
+	UtilizationUnknown bool `json:"utilization_unknown,omitempty"`
 	// ResetAt is when the window resets, as last reported.
 	ResetAt time.Time `json:"reset_at,omitempty"`
 	// Window is the window length, when known.
@@ -80,7 +84,7 @@ func parseClaudeMeters(signals map[string]string, now time.Time) (map[string]*Me
 		if existing := meters[claim]; existing != nil {
 			return existing
 		}
-		created := &Meter{Name: claim, Window: claudeClaimWindow(claim), ObservedAt: now}
+		created := &Meter{Name: claim, Window: claudeClaimWindow(claim), ObservedAt: now, UtilizationUnknown: true}
 		meters[claim] = created
 		return created
 	}
@@ -102,7 +106,8 @@ func parseClaudeMeters(signals map[string]string, now time.Time) (map[string]*Me
 		}
 		if claim, found := strings.CutSuffix(rest, "-utilization"); found && claim != "" {
 			if parsed, errParse := strconv.ParseFloat(value, 64); errParse == nil {
-				meter(claim).Utilization = parsed
+				created := meter(claim)
+				created.Utilization, created.UtilizationUnknown = parsed, false
 			}
 		} else if claim, found = strings.CutSuffix(rest, "-reset"); found && claim != "" {
 			if parsed, okParse := parseQuotaResetTime(value); okParse {
@@ -158,13 +163,13 @@ func parseCodexMeters(signals map[string]string, now time.Time) (map[string]*Met
 		}
 		meter := meters[meterName]
 		if meter == nil {
-			meter = &Meter{Name: meterName, ObservedAt: now}
+			meter = &Meter{Name: meterName, ObservedAt: now, UtilizationUnknown: true}
 			meters[meterName] = meter
 		}
 		switch field {
 		case "used-percent":
 			if parsed, errParse := strconv.ParseFloat(value, 64); errParse == nil {
-				meter.Utilization = parsed / 100
+				meter.Utilization, meter.UtilizationUnknown = parsed/100, false
 			}
 		case "window-minutes":
 			if parsed, errParse := strconv.ParseInt(value, 10, 64); errParse == nil && parsed > 0 {
@@ -284,12 +289,13 @@ func meterAppliesToModel(provider string, meter *Meter, model string) bool {
 }
 
 // effectiveMeter returns the meter as it stands at now: a window whose reset
-// has passed starts again at zero, with its next reset rolled forward.
+// has passed starts again at zero, known or not before, with its next reset
+// rolled forward.
 func effectiveMeter(meter Meter, now time.Time) (Meter, bool) {
 	if meter.ResetAt.IsZero() || meter.ResetAt.After(now) {
 		return meter, false
 	}
-	meter.Utilization = 0
+	meter.Utilization, meter.UtilizationUnknown = 0, false
 	meter.Status = ""
 	if meter.Window > 0 {
 		periods := now.Sub(meter.ResetAt)/meter.Window + 1

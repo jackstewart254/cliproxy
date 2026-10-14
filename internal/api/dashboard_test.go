@@ -14,20 +14,18 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 )
 
-func TestFromLoopbackOrTailnet(t *testing.T) {
+func TestFromLoopback(t *testing.T) {
 	cases := map[string]bool{
-		"127.0.0.1:5000":          true,
-		"[::1]:5000":              true,
-		"100.65.36.120:5000":      true,
-		"[fd7a:115c:a1e0::1]:443": true,
-		"172.28.96.1:5000":        false,
-		"192.168.1.20:5000":       false,
-		"100.128.0.1:5000":        false,
-		"not-an-address":          false,
+		"127.0.0.1:5000":     true,
+		"[::1]:5000":         true,
+		"100.65.36.120:5000": false,
+		"172.28.96.1:5000":   false,
+		"192.168.1.20:5000":  false,
+		"not-an-address":     false,
 	}
 	for addr, want := range cases {
-		if got := fromLoopbackOrTailnet(addr); got != want {
-			t.Errorf("fromLoopbackOrTailnet(%q) = %v, want %v", addr, got, want)
+		if got := fromLoopback(addr); got != want {
+			t.Errorf("fromLoopback(%q) = %v, want %v", addr, got, want)
 		}
 	}
 }
@@ -50,9 +48,9 @@ func TestPostDashboardSessions(t *testing.T) {
 	if rec := post("192.168.1.20:5000", body); rec.Code != http.StatusForbidden {
 		t.Fatalf("LAN caller: status %d, want 403", rec.Code)
 	}
-	rec := post("100.65.36.120:5000", body)
+	rec := post("127.0.0.1:5000", body)
 	if rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != `{"updated":2}` {
-		t.Fatalf("tailnet caller: status %d body %s, want 200 and 2 updated", rec.Code, rec.Body.String())
+		t.Fatalf("loopback caller: status %d body %s, want 200 and 2 updated", rec.Code, rec.Body.String())
 	}
 	if rec := post("127.0.0.1:5000", `{"sessions":`); rec.Code != http.StatusBadRequest {
 		t.Fatalf("bad json: status %d, want 400", rec.Code)

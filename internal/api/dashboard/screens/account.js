@@ -1,7 +1,7 @@
 // Account details: limits and plan, the last 24 hours, its active sessions.
 import {
-  S, esc, icon, logo, accountById, status, limits, left, plan, planDay, planDaysAway, inDays, resetLong,
-  modeMenu, planMenu, modeTitle, sessions, warnState, seg, accounts,
+  S, esc, icon, logo, accountById, status, limits, left, ageParts, plan, planDay, planDaysAway, inDays, resetLong,
+  modeMenu, planMenu, rankMenu, modeTitle, sessions, warnState, seg, accounts, routingOrder, rankTitle,
 } from "../core.js";
 import { sessionTable } from "./common.js";
 import { allowanceSeries, trajectory, outlook, rateText } from "./burn.js";
@@ -40,8 +40,9 @@ function limitBlock(title, item, st, tr) {
   const usedUp = st.kind === "usedup" && title === "Week";
   const p = usedUp ? 0 : left(item);
   const reset = usedUp ? st.until || item.reset : item.reset;
-  return `<div class="lim"><span class="muted">${title}</span>
-    <div class="bignum"><span class="v">${usedUp ? "Used up" : Math.round(p) + "%"}</span>${usedUp ? "" : `<span class="u">left</span>`}</div>
+  const age = ageParts(item);
+  return `<div class="lim"${age.title}><span class="muted">${title}${age.note ? " " + age.note : ""}</span>
+    <div class="bignum"><span class="v${item.stale ? " muted" : ""}">${usedUp ? "Used up" : Math.round(p) + "%"}</span>${usedUp ? "" : `<span class="u">left</span>`}</div>
     <div class="bar6"><i style="width:${Math.round(p)}%"></i></div>
     <div class="sub">${reset ? icon("reset", 14) + esc(resetLong(reset)) : "&nbsp;"}</div>${usedUp ? "" : burnLine(tr)}</div>`;
 }
@@ -69,6 +70,7 @@ export function view(ctx) {
     return { html: `<div class="bar"><div class="crumbs"><a href="#/accounts">Accounts</a>${icon("chevronRight", 14)}<span class="here">Not found</span></div></div><div class="body"><div class="empty">This account is not signed in on the proxy.</div></div>` };
   }
   const st = status(a);
+  const r = routingOrder(accounts().filter((x) => x.provider === a.provider)).find((x) => x.id === a.id);
   const lim = limits(a);
   const sc = oneScope(a);
   const strip = timeStrip({ key: "acStrip:" + a.id, sc });
@@ -86,6 +88,7 @@ export function view(ctx) {
       <div class="crumbs"><a href="#/accounts">Accounts</a>${icon("chevronRight", 14)}<span class="here">${logo(a.provider, "sm")}<span class="clamp">${esc(a.email)}</span></span></div>
       <div class="end">
         <button class="modebtn" data-mode><span class="k">Mode</span><span class="v">${esc(modeTitle(a.mode))}</span>${icon("chevronDown", 14, "var(--muted-fg)")}</button>
+        <button class="modebtn" data-rank title="${esc(rankTitle(r))}"><span class="k">Rank</span><span class="v">${r.rank ? "#" + r.rank : "—"}</span>${icon("chevronDown", 14, "var(--muted-fg)")}</button>
         <button class="iconbtn" data-more aria-label="More">${icon("more")}</button>
       </div>
     </div>
@@ -120,6 +123,7 @@ export function view(ctx) {
       root.querySelectorAll("[data-ac-window]").forEach((b) => { b.onclick = () => { S.ui.acWindow = b.dataset.acWindow; window.dispatchEvent(new Event("dash:render")); }; });
       root.querySelector("[data-mode]").onclick = (e) => modeMenu(e.currentTarget, a);
       root.querySelector("[data-more]").onclick = (e) => planMenu(e.currentTarget, a);
+      root.querySelector("[data-rank]").onclick = (e) => rankMenu(e.currentTarget, a);
       const setPlan = root.querySelector("[data-plan]");
       if (setPlan) setPlan.onclick = () => planMenu(root.querySelector("[data-more]"), a);
     },
