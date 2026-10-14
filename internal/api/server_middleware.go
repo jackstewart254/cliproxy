@@ -1,6 +1,7 @@
 package api
 
 import (
+	"net"
 	"net/http"
 	"strings"
 
@@ -131,6 +132,15 @@ func isExampleAPIKeySafeModeProxyPath(path string) bool {
 //   - gin.HandlerFunc: The CORS middleware handler
 func corsMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		if path := c.Request.URL.Path; path == "/dashboard" || strings.HasPrefix(path, "/dashboard/") {
+			if !dashboardRequestAllowed(c.Request) {
+				c.AbortWithStatus(http.StatusForbidden)
+				return
+			}
+			c.Next()
+			return
+		}
+
 		c.Header("Access-Control-Allow-Origin", "*")
 		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 		c.Header("Access-Control-Allow-Headers", "*")
@@ -143,6 +153,23 @@ func corsMiddleware() gin.HandlerFunc {
 
 		c.Next()
 	}
+}
+
+// dashboardRequestAllowed keeps the key-less dashboard routes away from other
+// websites and DNS rebinding: the Host must be loopback, and any Origin must be
+// that same host. No CORS headers are sent for /dashboard.
+func dashboardRequestAllowed(r *http.Request) bool {
+	host, _, err := net.SplitHostPort(r.Host)
+	if err != nil {
+		host = r.Host
+	}
+	switch strings.Trim(host, "[]") {
+	case "127.0.0.1", "localhost", "::1":
+	default:
+		return false
+	}
+	origin := r.Header.Get("Origin")
+	return origin == "" || origin == "http://"+r.Host || origin == "https://"+r.Host
 }
 
 // AuthMiddleware returns a Gin middleware handler that authenticates requests
