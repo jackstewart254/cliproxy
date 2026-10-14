@@ -8,6 +8,7 @@ import (
 	"math"
 	"net/http"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -982,6 +983,7 @@ func (s *SessionAffinitySelector) Pick(ctx context.Context, provider, model stri
 	}
 	opts.Metadata[cliproxyexecutor.SessionAffinityProviderMetadataKey] = provider
 	opts.Metadata[cliproxyexecutor.SessionAffinityModelMetadataKey] = model
+	delete(opts.Metadata, lcpBoundAuthIDMetadataKey)
 
 	// Explicit harness identities are absolute authority. The LCP matcher is only
 	// consulted when no header, body, or execution-session identity is present.
@@ -1086,8 +1088,12 @@ func (s *SessionAffinitySelector) Pick(ctx context.Context, provider, model stri
 		return auth, nil
 	}
 
+	fallbackBoundID := ""
 	if fallbackKey != "" {
 		if cachedAuthID, ok := s.cache.Get(fallbackKey); ok {
+			if !isSubagent || s.subagentAffinity {
+				fallbackBoundID = cachedAuthID
+			}
 			for _, auth := range available {
 				if auth.ID == cachedAuthID {
 					if !isSubagent || s.subagentAffinity {
@@ -1111,6 +1117,10 @@ func (s *SessionAffinitySelector) Pick(ctx context.Context, provider, model stri
 	if auth == nil {
 		return nil, nil
 	}
+	if fallbackBoundID != "" && !s.rebindAllowed(ctx, fallbackBoundID, now) {
+		entry.Infof("session-affinity: fallback-bound auth temporarily unavailable, serving once | session=%s bound=%s auth=%s provider=%s model=%s", truncateSessionID(primaryID), fallbackBoundID, auth.ID, provider, model)
+		return auth, nil
+	}
 	bind(auth.ID)
 	if isFork && fallbackID != "" {
 		entry.Infof("session-affinity: fork bound to new auth | session=%s parent=%s auth=%s provider=%s model=%s", truncateSessionID(primaryID), truncateSessionID(fallbackID), auth.ID, provider, model)
@@ -1119,6 +1129,10 @@ func (s *SessionAffinitySelector) Pick(ctx context.Context, provider, model stri
 	}
 	return auth, nil
 }
+
+// lcpBoundAuthIDMetadataKey marks an LCP request served away from its bound credential
+// without rebinding, so OnResult extends the sequence under the bound credential.
+const lcpBoundAuthIDMetadataKey = "lcp_bound_auth_id"
 
 // sessionAuthLookupKey carries the manager's credential lookup into Pick, which
 // otherwise only sees the credentials that are available for this request.
@@ -1175,6 +1189,19 @@ func (s *SessionAffinitySelector) pickLCP(ctx context.Context, provider, model s
 	}
 
 	if match, ok := s.matcher.MatchFingerprintsWithContext(namespace, fingerprints, tailFingerprints, envDigest, minPrefixLength); ok {
+		matched := slices.ContainsFunc(available, func(auth *Auth) bool { return auth != nil && auth.ID == match.AuthID })
+		if !matched && !s.rebindAllowed(ctx, match.AuthID, time.Now()) {
+			picked, errPick := s.fallback.Pick(ctx, provider, model, opts, highestPriorityAuths(available))
+			if errPick != nil {
+				return nil, true, errPick
+			}
+			if picked == nil {
+				return nil, true, &Error{Code: "auth_not_found", Message: "selector returned no auth"}
+			}
+			entry.Infof("session-affinity: LCP bound auth temporarily unavailable, serving once | session=%s bound=%s auth=%s provider=%s model=%s", truncateSessionID(match.SessionID), match.AuthID, picked.ID, provider, model)
+			opts.Metadata[lcpBoundAuthIDMetadataKey] = match.AuthID
+			match.AuthID = picked.ID
+		}
 		for _, auth := range available {
 			if auth == nil || auth.ID != match.AuthID {
 				continue
@@ -1535,8 +1562,13 @@ func (s *SessionAffinitySelector) OnResult(res Result) {
 			}
 			if len(fingerprints) > 0 && minPrefixLength > 0 && minPrefixLength <= len(fingerprints) {
 				if res.Success {
-					s.matcher.TouchFingerprintsWithContext(namespace, fingerprints, tailFingerprints, envDigest, minPrefixLength, res.AuthID)
-				} else {
+					touchAuthID := res.AuthID
+					if boundAuthID, _ := res.Options.Metadata[lcpBoundAuthIDMetadataKey].(string); boundAuthID != "" {
+						touchAuthID = boundAuthID
+					}
+					s.matcher.TouchFingerprintsWithContext(namespace, fingerprints, tailFingerprints, envDigest, minPrefixLength, touchAuthID)
+				} else if !s.rebindOnQuota {
+					// A failure drops the attempted sequence; in quota mode Pick decides instead.
 					var generation uint64
 					if res.Options.Metadata != nil {
 						if gen, ok := res.Options.Metadata[cliproxyexecutor.LCPAccessGenerationMetadataKey].(uint64); ok {
