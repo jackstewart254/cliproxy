@@ -113,28 +113,20 @@ func (s *Service) fetchClaudeUsage(ctx context.Context, auth *coreauth.Auth, tok
 	return body, nil
 }
 
-// probeWarnings holds the last failure warned about for each account. A
-// failing account has no fresh reading, so it is probed again every minute;
-// it is warned about once per meterProbeMaxAge, or again when the error changes.
-var probeWarnings sync.Map // auth ID -> probeWarning
+// probeWarnings holds when each account's probe failure was last warned
+// about. A failing account has no fresh reading, so it is probed again every
+// minute; it is warned about at most once per meterProbeMaxAge, whatever the
+// error says (network errors name a new local port each time).
+var probeWarnings sync.Map // auth ID -> time.Time
 
-type probeWarning struct {
-	msg string
-	at  time.Time
-}
-
-// warnProbeFailure logs a failed probe at Warn, or at Debug when the same
-// error was warned about for the account within meterProbeMaxAge. It reports
-// whether it warned.
+// warnProbeFailure logs a failed probe at Warn, or at Debug when the account
+// was warned about within meterProbeMaxAge. It reports whether it warned.
 func warnProbeFailure(authID string, errProbe error, now time.Time) bool {
-	msg := errProbe.Error()
-	if last, ok := probeWarnings.Load(authID); ok {
-		if warned := last.(probeWarning); warned.msg == msg && now.Sub(warned.at) < meterProbeMaxAge {
-			log.WithField("auth", authID).Debugf("claude usage probe: %v", errProbe)
-			return false
-		}
+	if last, ok := probeWarnings.Load(authID); ok && now.Sub(last.(time.Time)) < meterProbeMaxAge {
+		log.WithField("auth", authID).Debugf("claude usage probe: %v", errProbe)
+		return false
 	}
-	probeWarnings.Store(authID, probeWarning{msg: msg, at: now})
+	probeWarnings.Store(authID, now)
 	log.WithField("auth", authID).Warnf("claude usage probe failed, keeping the last reading: %v", errProbe)
 	return true
 }
