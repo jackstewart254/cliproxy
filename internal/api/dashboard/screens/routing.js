@@ -37,7 +37,10 @@ function queueRows(provider) {
   }];
   list.forEach((a) => {
     const rank = q.order.indexOf(a);
-    const w = signalLimits(a).week || limits(a).week;
+    // The meter shows the known reading, router meters first as on Accounts;
+    // the reset stays the one the queue orders by.
+    const w = limits(a).week;
+    const reset = signalLimits(a).week?.reset || w?.reset;
     const st = status(a);
     rows.push({
       href: "#/accounts/" + encodeURIComponent(a.id),
@@ -45,8 +48,8 @@ function queueRows(provider) {
         rank >= 0 ? `<span class="muted">${rank + 1}</span>` : "",
         "",
         email(a.email),
-        w?.reset ? esc(resetLong(st.kind === "usedup" ? st.until || w.reset : w.reset)) : "",
-        st.kind === "off" || st.kind === "blocked" || st.kind === "error" ? "" : w && (st.kind === "usedup" || left(w) != null) ? meterCell(st.kind === "usedup" ? 0 : left(w), "", w) : `<span class="muted">No reading</span>`,
+        reset ? esc(resetLong(st.kind === "usedup" ? st.until || reset : reset)) : "",
+        st.kind === "off" || st.kind === "blocked" || st.kind === "error" ? "" : w ? meterCell(st.kind === "usedup" ? 0 : left(w), "", w) : `<span class="muted">No reading</span>`,
         statusCell(a, q.next && a.id === q.next.id),
       ],
     });

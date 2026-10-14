@@ -712,8 +712,12 @@ function stamp(item, iso) {
 // An item without a used share shows as No reading, not as 100% left.
 const known = (item) => (item && Number.isFinite(item.used) ? item : null);
 
-// How long ago a limits() item was read ("4m ago"), or "" when unknown.
-export const readAge = (item) => (item?.observed ? ago(item.observed) : "");
+// A limits() item's reading age as markup: a title attribute ("Read 2h ago"),
+// and once the reading is stale a short note ("· 2h") to show beside it.
+export function ageParts(item) {
+  const age = item?.observed ? ago(item.observed) : "";
+  return { title: age ? ` title="Read ${age}"` : "", note: item?.stale && age ? "· " + age.replace(/ ago$/, "") : "" };
+}
 
 export function primeSet() {
   return new Set((S.data?.routing?.prime_after_reset || []).map((p) => String(p).toLowerCase()));
@@ -928,13 +932,13 @@ export function email(addr) {
 export const pill = (text, cls = "") => `<span class="pill ${cls}">${esc(text)}</span>`;
 export const warnState = (text, cls = "") => `<span class="state ${cls}" title="${esc(text)}">${warnIcon(14)}<span class="clamp">${esc(text)}</span></span>`;
 
-// item, a limits() item, adds its reading's age: in the tooltip, and shown
-// short ("· 2h") on a muted cell once the reading is stale.
+// item, a limits() item, adds its reading's age (ageParts), on a muted cell
+// once the reading is stale.
 export function meterCell(pctLeft, color = "", item = null) {
   if (pctLeft == null) return "";
   const p = Math.max(0, Math.min(100, pctLeft));
-  const age = readAge(item);
-  return `<span class="metercell${item?.stale ? " stale" : ""}"${age ? ` title="Read ${age}"` : ""}><span class="meter"><i style="width:${p}%${color ? ";background:" + color : ""}"></i></span><span class="${p <= 0 ? "muted" : ""}">${Math.round(p)}%</span>${item?.stale ? `<span>· ${age.replace(/ ago$/, "")}</span>` : ""}</span>`;
+  const age = ageParts(item);
+  return `<span class="metercell${item?.stale ? " stale" : ""}"${age.title}><span class="meter"><i style="width:${p}%${color ? ";background:" + color : ""}"></i></span><span class="${p <= 0 ? "muted" : ""}">${Math.round(p)}%</span>${age.note ? `<span>${age.note}</span>` : ""}</span>`;
 }
 
 export function seg(items, active, attr, cls = "") {

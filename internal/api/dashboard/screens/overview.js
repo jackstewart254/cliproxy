@@ -1,6 +1,6 @@
 // Overview: weekly allowance per provider, the last 24 hours, active sessions.
 import {
-  esc, icon, logo, pill, warnState, accounts, status, limits, left, queue, plan, planDay, planDaysAway, resetShort, clock,
+  esc, icon, logo, pill, warnState, accounts, status, limits, left, ageParts, queue, plan, planDay, planDaysAway, resetShort, clock,
   providerTitle, sessions, isToday, accountScope,
 } from "../core.js";
 import { readAt, sessionTable, sessionInScope } from "./common.js";
@@ -26,6 +26,12 @@ function planEnding(acct, reset) {
   return days <= Math.max(7, resetDays) ? warnState("Plan ends " + planDay(p.ends), "sm") : "";
 }
 
+// "62% left", muted with its age once the reading is stale.
+function leftText(week) {
+  const age = ageParts(week);
+  return `<span class="t${week.stale ? " muted" : ""}"${age.title}>${Math.round(left(week))}% left${age.note ? " " + age.note : ""}</span>`;
+}
+
 function accountColumn(acct, isNext) {
   const st = status(acct);
   const week = limits(acct).week;
@@ -41,11 +47,11 @@ function accountColumn(acct, isNext) {
     end = planEnding(acct, st.until || week?.reset);
     l2 += reset(st.until || week?.reset);
   } else if (st.kind === "limited") {
-    l1 = `<span class="t">${week ? Math.round(left(week)) + "% left" : "Resting"}</span>`;
+    l1 = week ? leftText(week) : `<span class="t">Resting</span>`;
     l2 += st.until ? `<span class="reset">${icon("reset", 14)}back ${esc(clock(st.until))}</span>` : "";
   } else {
     if (week && week.notStarted) l1 = `<span class="t">New week</span>`;
-    else l1 = week ? `<span class="t">${Math.round(left(week))}% left</span>` : `<span class="t muted">No reading yet</span>`;
+    else l1 = week ? leftText(week) : `<span class="t muted">No reading yet</span>`;
     if (isNext) l1 += pill("Next");
     end = runningOut(acct) || planEnding(acct, week?.reset);
     l2 += reset(week?.reset);

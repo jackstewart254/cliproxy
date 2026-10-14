@@ -1,6 +1,6 @@
 // Account details: limits and plan, the last 24 hours, its active sessions.
 import {
-  S, esc, icon, logo, accountById, status, limits, left, readAge, plan, planDay, planDaysAway, inDays, resetLong,
+  S, esc, icon, logo, accountById, status, limits, left, ageParts, plan, planDay, planDaysAway, inDays, resetLong,
   modeMenu, planMenu, rankMenu, modeTitle, sessions, warnState, seg, accounts, routingOrder, rankTitle,
 } from "../core.js";
 import { sessionTable } from "./common.js";
@@ -40,8 +40,8 @@ function limitBlock(title, item, st, tr) {
   const usedUp = st.kind === "usedup" && title === "Week";
   const p = usedUp ? 0 : left(item);
   const reset = usedUp ? st.until || item.reset : item.reset;
-  const age = readAge(item);
-  return `<div class="lim"${age ? ` title="Read ${age}"` : ""}><span class="muted">${title}${item.stale ? " · " + age : ""}</span>
+  const age = ageParts(item);
+  return `<div class="lim"${age.title}><span class="muted">${title}${age.note ? " " + age.note : ""}</span>
     <div class="bignum"><span class="v${item.stale ? " muted" : ""}">${usedUp ? "Used up" : Math.round(p) + "%"}</span>${usedUp ? "" : `<span class="u">left</span>`}</div>
     <div class="bar6"><i style="width:${Math.round(p)}%"></i></div>
     <div class="sub">${reset ? icon("reset", 14) + esc(resetLong(reset)) : "&nbsp;"}</div>${usedUp ? "" : burnLine(tr)}</div>`;
