@@ -374,9 +374,10 @@ svg { display: block; flex-shrink: 0; }
 .sech .t b { font-size: 13px; font-weight: 500; white-space: nowrap; }
 .tblwrap { overflow-x: auto; }
 .tbl { min-width: max-content; width: 100%; }
-/* Accounts fits its panel: sized columns shrink to a floor (table fit option),
-   and Plan renews drops out on narrow panels (it stays in each account's … menu).
-   It only scrolls sideways below that floor. */
+/* Accounts fits its panel: sized columns shrink to a floor (table fit option)
+   and the account column truncates. Narrower panels drop columns, least useful
+   first: Plan renews (it stays in each account's … menu), then reset day and
+   requests, then the 5-hour meter and Mode (both on Account details). */
 .tblwrap.acctbl { container-type: inline-size; }
 .tblwrap.acctbl .tbl { min-width: 0; }
 .acctbl .tr { gap: 12px; }
@@ -385,6 +386,8 @@ svg { display: block; flex-shrink: 0; }
 .acctbl .tr.head .c { white-space: normal; line-height: 14px; }
 .acctbl .meter { width: auto; flex: 1 1 64px; min-width: 24px; }
 @container (max-width: 860px) { .acctbl .c.plancol { display: none; } }
+@container (max-width: 700px) { .acctbl .c.resetcol, .acctbl .c.reqcol { display: none; } }
+@container (max-width: 520px) { .acctbl .c.shortcol, .acctbl .c.modecol { display: none; } }
 .tr { display: flex; align-items: center; gap: 16px; height: 48px; padding: 0 24px; border-bottom: 1px solid var(--row-line); font-size: 13px; }
 .tr.head { height: 32px; background: var(--canvas); border-top: 1px solid var(--hairline); border-bottom: 1px solid var(--hairline); font-size: 12px; color: var(--muted-fg); }
 .tr.group { height: 44px; }

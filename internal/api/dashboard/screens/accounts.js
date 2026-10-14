@@ -42,15 +42,15 @@ export function view(ctx) {
   const list = ordered.filter((a) => keep.has(a.id));
   const next = nextIds();
   const cols = [
-    { label: "Priority", w: 56, min: 52 },
+    { label: "#", w: 20, min: 20 },
     { label: "", w: 16, min: 16, cls: "ic" },
     { label: "Account" },
-    { label: "Week left", w: 120 },
-    { label: "Week resets", w: 104 },
-    { label: "Plan renews", w: 128, cls: "plancol" },
-    { label: "5 hours left", w: 120 },
-    { label: "Requests today", w: 96, r: true },
-    { label: "Mode", w: 104, cls: "modecol" },
+    { label: "Week left", w: 112 },
+    { label: "Week resets", w: 96, cls: "resetcol" },
+    { label: "Plan renews", w: 112, cls: "plancol" },
+    { label: "5 hours left", w: 112, cls: "shortcol" },
+    { label: "Requests today", w: 80, r: true, cls: "reqcol" },
+    { label: "Mode", w: 96, min: 84, cls: "modecol" },
     { label: "", w: 20, min: 20 },
   ];
   const rows = list.map((a) => {
