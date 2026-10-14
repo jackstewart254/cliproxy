@@ -230,8 +230,8 @@ svg { display: block; flex-shrink: 0; }
 .meter { width: 64px; height: 6px; border-radius: 999px; background: var(--surface-2); overflow: hidden; flex-shrink: 0; }
 .meter i { display: block; height: 100%; border-radius: 999px; background: var(--chart-1); }
 .metercell { display: flex; align-items: center; gap: 8px; font-size: 13px; }
-.metercell.stale { color: var(--muted-fg); }
-.metercell.stale .meter i { opacity: 0.5; }
+.metercell.stale, .pctcell.stale { color: var(--muted-fg); }
+.metercell.stale .meter i, .pctcell.stale .meter i { opacity: 0.5; }
 .bigbar { height: 8px; border-radius: 999px; background: var(--surface-2); overflow: hidden; display: flex; }
 .bigbar i { display: block; height: 100%; background: var(--chart-1); }
 
@@ -936,6 +936,7 @@ a.tr:hover, .tr.click:hover { background: var(--hover); cursor: pointer; }
 .ttbl .tr.earlier { color: var(--muted-fg); }
 .ttbl .lead { width: 32px; flex-shrink: 0; display: flex; align-items: center; gap: 8px; }
 .ttbl .meter { width: 64px; }
+.ttbl .pctcell.stale .meter { width: 40px; } /* room for the age in Week left */
 .ttbl .meter.reuse { border-radius: 3px; }
 .ttbl .meter.reuse i { border-radius: 3px; background: var(--chart-p90); }
 .ttbl .pctcell { display: flex; align-items: center; gap: 8px; }

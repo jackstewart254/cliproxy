@@ -703,7 +703,7 @@ const num = (v) => (v === "" || v == null ? NaN : Number(v));
 export const STALE_MS = 30 * 60e3;
 
 // Marks an item with when it was read and whether that is older than STALE_MS.
-function stamp(item, iso) {
+export function stamp(item, iso) {
   if (!item) return null;
   const at = validTime(iso) ? Date.parse(iso) : 0;
   return Object.assign(item, { observed: at, stale: !!at && Date.now() - at > STALE_MS });
