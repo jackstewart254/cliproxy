@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -875,5 +876,29 @@ func TestPatchAuthFileFields_IDTokenMissingPlanTypeDefaultsToFree(t *testing.T) 
 	}
 	if got := auth.Attributes["plan_type"]; got != "free" {
 		t.Fatalf("auth plan_type attribute = %q, want free", got)
+	}
+}
+
+func TestRerankPriorities(t *testing.T) {
+	// Given out of order: the scheduler order is a, b, c, then Reserve r.
+	settled := []rankedAuth{{"r", -1}, {"c", 0}, {"a", 2}, {"b", 1}}
+	cases := []struct {
+		name string
+		list []rankedAuth
+		id   string
+		rank int
+		want map[string]int
+	}{
+		{"move to top", settled, "c", 1, map[string]int{"c": 2, "a": 1, "b": 0}},
+		// Below Reserve r, a joins Reserve; b and c already read 1 and 0.
+		{"move to bottom", settled, "a", 4, map[string]int{"a": -2}},
+		// Equal priorities, as on a fresh install, become strict.
+		{"move to middle", []rankedAuth{{"x", 0}, {"y", 0}, {"z", 0}}, "z", 2, map[string]int{"x": 2, "z": 1}},
+		{"no-op", settled, "b", 2, map[string]int{}},
+	}
+	for _, tc := range cases {
+		if got := rerankPriorities(tc.list, tc.id, tc.rank); !maps.Equal(got, tc.want) {
+			t.Errorf("%s: got %v, want %v", tc.name, got, tc.want)
+		}
 	}
 }

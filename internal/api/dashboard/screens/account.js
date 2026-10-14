@@ -1,7 +1,7 @@
 // Account details: limits and plan, the last 24 hours, its active sessions.
 import {
   S, esc, icon, logo, accountById, status, limits, left, plan, planDay, planDaysAway, inDays, resetLong,
-  modeMenu, planMenu, priorityMenu, modeTitle, sessions, warnState, seg, accounts, routingOrder, rankTitle,
+  modeMenu, planMenu, rankMenu, modeTitle, sessions, warnState, seg, accounts, routingOrder, rankTitle,
 } from "../core.js";
 import { sessionTable } from "./common.js";
 import { allowanceSeries, trajectory, outlook, rateText } from "./burn.js";
@@ -87,7 +87,7 @@ export function view(ctx) {
       <div class="crumbs"><a href="#/accounts">Accounts</a>${icon("chevronRight", 14)}<span class="here">${logo(a.provider, "sm")}<span class="clamp">${esc(a.email)}</span></span></div>
       <div class="end">
         <button class="modebtn" data-mode><span class="k">Mode</span><span class="v">${esc(modeTitle(a.mode))}</span>${icon("chevronDown", 14, "var(--muted-fg)")}</button>
-        <button class="modebtn" data-priority title="${esc(rankTitle(r))}"><span class="k">Priority</span><span class="v">${esc(a.priority)}${r.rank ? " · #" + r.rank : ""}</span></button>
+        <button class="modebtn" data-rank title="${esc(rankTitle(r))}"><span class="k">Rank</span><span class="v">${r.rank ? "#" + r.rank : "—"}</span>${icon("chevronDown", 14, "var(--muted-fg)")}</button>
         <button class="iconbtn" data-more aria-label="More">${icon("more")}</button>
       </div>
     </div>
@@ -122,7 +122,7 @@ export function view(ctx) {
       root.querySelectorAll("[data-ac-window]").forEach((b) => { b.onclick = () => { S.ui.acWindow = b.dataset.acWindow; window.dispatchEvent(new Event("dash:render")); }; });
       root.querySelector("[data-mode]").onclick = (e) => modeMenu(e.currentTarget, a);
       root.querySelector("[data-more]").onclick = (e) => planMenu(e.currentTarget, a);
-      root.querySelector("[data-priority]").onclick = (e) => priorityMenu(e.currentTarget, a);
+      root.querySelector("[data-rank]").onclick = (e) => rankMenu(e.currentTarget, a);
       const setPlan = root.querySelector("[data-plan]");
       if (setPlan) setPlan.onclick = () => planMenu(root.querySelector("[data-more]"), a);
     },

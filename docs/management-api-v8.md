@@ -103,6 +103,7 @@ retain the corresponding business operation's fields.
 | `/credentials/download` | GET | Download a credential file. |
 | `/credentials/status` | PATCH | Change credential status. |
 | `/credentials/fields` | PATCH | Change credential fields. |
+| `/credentials/rank` | PATCH | Move an enabled credential to a rank in its provider's routing order (`{"name", "rank"}`, 1 is used first); rewrites priorities so the order is strict. |
 | `/credentials/refresh` | POST | Refresh credentials. |
 | `/oauth/import?provider=vertex` | POST | Import a Vertex service account using a multipart `file` upload. |
 | `/oauth/auth-url?provider=<provider>` | GET | Start built-in or plugin OAuth. |

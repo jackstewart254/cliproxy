@@ -1058,7 +1058,7 @@ export function routingOrder(list, strategy = S.data?.routing?.strategy) {
   return [...ranked, ...list.filter(off).map((a) => ({ ...a, rank: 0, after: 0 }))];
 }
 
-export const rankTitle = (a) => "Priority " + a.priority + " · " + (!a.rank ? "Off, never used" : a.after ? "used after #" + a.after : "used first");
+export const rankTitle = (a) => (!a.rank ? "Off, never used" : a.after ? "Used after #" + a.after : "Used first");
 
 export const MODES = [
   { id: "rotation", a: "Rotation", b: "Takes new sessions" },
@@ -1078,35 +1078,42 @@ export async function write(fn, done) {
   window.dispatchEvent(new Event("dash:refresh"));
 }
 
-// Mode, plan-date and priority menus shared by Accounts and Account details.
+// Mode, plan-date and rank menus shared by Accounts and Account details.
 export function modeMenu(anchor, acct) {
   menu(anchor, MODES.map((m) => ({ a: m.a, b: m.b, on: acct.mode === m.id, run: () => { if (m.id !== acct.mode) write(() => setMode(acct, m.id), acct.email + ": " + m.a); } })));
 }
 
-// One saved field of an account's auth file: a date, or a whole number.
-function accountField(acct, key, label, value, hint, type = "date") {
+// One saved date field of an account's auth file.
+function accountField(acct, key, label, value, hint) {
   return {
-    html: `<div class="field"><label>${esc(label)}</label><div class="inline"><input class="input" type="${type}"${type === "number" ? ` step="1" min="-1000" max="1000" placeholder="0"` : ""} value="${esc(value)}" data-k="${key}" style="flex:1"><button class="btn outline" data-save="${key}">Save</button></div>${hint ? `<span class="muted">${esc(hint)}</span>` : ""}</div>`,
+    html: `<div class="field"><label>${esc(label)}</label><div class="inline"><input class="input" type="date" value="${esc(value)}" data-k="${key}" style="flex:1"><button class="btn outline" data-save="${key}">Save</button></div>${hint ? `<span class="muted">${esc(hint)}</span>` : ""}</div>`,
     mount: (el) => {
       el.querySelector("[data-save]").onclick = () => {
         const input = el.querySelector("input");
-        if (input.validity.badInput) return toast(label + " must be a " + (type === "number" ? "whole number" : "date"), true);
+        if (input.validity.badInput) return toast(label + " must be a date", true);
         const v = input.value.trim();
         closeMenu();
-        const sent = !v ? null : type === "number" ? Number(v) : v;
-        write(() => api("/credentials/fields", { method: "PATCH", body: JSON.stringify({ name: acct.name || acct.id, [key]: sent }) }), v ? label + " set to " + (type === "number" ? v : planDay(v)) : label + " cleared");
+        write(() => api("/credentials/fields", { method: "PATCH", body: JSON.stringify({ name: acct.name || acct.id, [key]: v || null }) }), v ? label + " set to " + planDay(v) : label + " cleared");
       };
     },
   };
 }
 
-function priorityField(acct) {
-  const ties = S.data?.routing?.strategy === "fill-first" ? "Equal priorities go alphabetically by account file." : "Equal priorities follow the routing order.";
-  return accountField(acct, "priority", "Priority", acct.priority || 0, "Higher is used first. " + ties + " Empty resets it to 0.", "number");
-}
-
-export function priorityMenu(anchor, acct) {
-  menu(anchor, [priorityField(acct)], { width: 280 });
+// The account's place among its provider's enabled accounts. The proxy moves
+// it there and renumbers the priorities behind it, so no raw number shows.
+export function rankMenu(anchor, acct) {
+  const on = routingOrder(accounts().filter((a) => a.provider === acct.provider)).filter((a) => a.rank);
+  const at = on.findIndex((a) => a.id === acct.id) + 1;
+  const note = (text) => ({ html: `<div class="field"><label>Rank</label><span class="muted">${esc(text)}</span></div>` });
+  if (!at) return menu(anchor, [note("Off accounts are never used. Switch it to Rotation or Reserve to give it a place.")], { width: 280 });
+  menu(anchor, [
+    note("The others shift to make room. Reserve accounts always come after Rotation ones."),
+    ...on.map((_, i) => ({
+      a: i + 1 + (!i ? " — used first" : i === on.length - 1 ? " — used last" : ""),
+      on: i + 1 === at,
+      run: () => { if (i + 1 !== at) write(() => api("/credentials/rank", { method: "PATCH", body: JSON.stringify({ name: acct.name || acct.id, rank: i + 1 }) }), acct.email + " moved to #" + (i + 1)); },
+    })),
+  ], { width: 280 });
 }
 
 export function planMenu(anchor, acct, extra = []) {
@@ -1116,6 +1123,7 @@ export function planMenu(anchor, acct, extra = []) {
     ...(extra.length ? ["sep"] : []),
     accountField(acct, "plan_renews_on", "Plan renews on", p.source === "manual" ? p.renews : "", p.source === "token" && p.renews ? "From the sign-in token: " + planDay(p.renews) + ". Set a date to override it." : "The day the subscription bills again."),
     accountField(acct, "plan_ends_on", "Plan ends on", p.ends, "Set this when you have cancelled. Leave empty while it renews."),
-    priorityField(acct),
+    "sep",
+    { a: "Change rank", run: () => rankMenu(anchor, acct) },
   ], { width: 280 });
 }

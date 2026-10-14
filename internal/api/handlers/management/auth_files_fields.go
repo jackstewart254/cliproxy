@@ -10,6 +10,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -456,6 +458,144 @@ func (h *Handler) PatchAuthFileFields(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+}
+
+// rankedAuth is an enabled credential and its priority, for rerankPriorities.
+type rankedAuth struct {
+	ID       string
+	Priority int
+}
+
+// rerankPriorities moves id to a 1-based rank in the order the scheduler
+// picks credentials (priority high to low, then ID in byte order) and returns
+// the new priority of each credential that changes. Priorities end up strict:
+// Rotation (zero or above) counts down to 0 and Reserve (below zero) from -1,
+// so every credential keeps its mode unless the move takes it past the other
+// group, where it joins that group. It returns nil for an unknown id or rank.
+func rerankPriorities(auths []rankedAuth, id string, rank int) map[string]int {
+	order := slices.Clone(auths)
+	sort.Slice(order, func(i, j int) bool {
+		if order[i].Priority != order[j].Priority {
+			return order[i].Priority > order[j].Priority
+		}
+		return order[i].ID < order[j].ID
+	})
+	from := slices.IndexFunc(order, func(a rankedAuth) bool { return a.ID == id })
+	if from < 0 || rank < 1 || rank > len(order) {
+		return nil
+	}
+	moved := order[from]
+	at := rank - 1
+	order = slices.Insert(slices.Delete(order, from, from+1), at, moved)
+	reserve := moved.Priority < 0
+	if at+1 < len(order) && order[at+1].Priority >= 0 {
+		reserve = false
+	} else if at > 0 && order[at-1].Priority < 0 {
+		reserve = true
+	}
+	rotation := 0
+	for i, a := range order {
+		if (i == at && !reserve) || (i != at && a.Priority >= 0) {
+			rotation++
+		}
+	}
+	changed := make(map[string]int)
+	for i, a := range order {
+		if priority := rotation - 1 - i; priority != a.Priority {
+			changed[a.ID] = priority
+		}
+	}
+	return changed
+}
+
+// PatchAuthFileRank moves an enabled credential to a place (rank 1 is used
+// first) among the enabled credentials of its provider, rewriting their
+// priorities with rerankPriorities. The dashboard sends ranks; it never shows
+// raw priorities.
+func (h *Handler) PatchAuthFileRank(c *gin.Context) {
+	if h.authManager == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "core auth manager unavailable"})
+		return
+	}
+	var req struct {
+		Name string `json:"name"`
+		Rank int    `json:"rank"`
+	}
+	if errBind := c.ShouldBindJSON(&req); errBind != nil || strings.TrimSpace(req.Name) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "name and a whole-number rank are required"})
+		return
+	}
+
+	// One reorder at a time, and never alongside a status change, so each
+	// request works from a settled order.
+	// ponytail: a save that fails part way leaves the earlier credentials
+	// rewritten; the next move makes the order strict again.
+	h.authStatusMu.Lock()
+	locked := true
+	defer func() {
+		if locked {
+			h.authStatusMu.Unlock()
+		}
+	}()
+
+	target, _ := h.lookupAuthFile(req.Name, "")
+	if target == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "auth file not found"})
+		return
+	}
+	// The same credentials, with the same priorities, that the dashboard ranks.
+	byID := make(map[string]*coreauth.Auth)
+	var order []rankedAuth
+	for _, auth := range h.authManager.List() {
+		if auth == nil || auth.Disabled || coreauth.IsPluginVirtualAuth(auth) || !strings.EqualFold(strings.TrimSpace(auth.Provider), strings.TrimSpace(target.Provider)) {
+			continue
+		}
+		entry := h.buildAuthFileEntry(auth)
+		if entry == nil {
+			continue
+		}
+		priority, _ := authFileIntValue(entry["priority"])
+		byID[auth.ID] = auth
+		order = append(order, rankedAuth{ID: auth.ID, Priority: priority})
+	}
+	if _, ok := byID[target.ID]; !ok {
+		c.JSON(http.StatusConflict, gin.H{"error": "only enabled credential files have a rank"})
+		return
+	}
+	if req.Rank < 1 || req.Rank > len(order) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("rank must be from 1 to %d", len(order))})
+		return
+	}
+
+	ctx := c.Request.Context()
+	changed := rerankPriorities(order, target.ID, req.Rank)
+	saved := make([]*coreauth.Auth, 0, len(changed))
+	for id, priority := range changed {
+		auth := byID[id]
+		if auth.Metadata == nil {
+			auth.Metadata = make(map[string]any)
+		}
+		coreauth.NormalizeCredentialMetadata(auth.Metadata)
+		auth.Metadata["priority"] = priority
+		syncAuthFilePriorityAttribute(auth)
+		auth.UpdatedAt = time.Now()
+		updated, errUpdate := h.authManager.Update(ctx, auth)
+		if errUpdate != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to update auth: %v", errUpdate)})
+			return
+		}
+		if updated == nil {
+			updated = auth
+		}
+		saved = append(saved, updated)
+	}
+	locked = false
+	h.authStatusMu.Unlock()
+	if errHook := h.invokePostAuthPersistHooks(ctx, saved); errHook != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("post-auth persist hook failed: %v", errHook)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "ok", "priorities": changed})
 }
 
 func decodeAuthFileFieldValue(raw json.RawMessage) (any, error) {
