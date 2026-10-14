@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -73,11 +74,12 @@ func (s *Service) probeClaudeMeters(ctx context.Context) {
 			continue
 		}
 		body, errProbe := s.fetchClaudeUsage(ctx, auth, token)
+		now := time.Now()
 		if errProbe != nil {
-			log.WithField("auth", auth.ID).Debugf("claude usage probe: %v", errProbe)
+			warnProbeFailure(auth.ID, errProbe, now)
 			continue
 		}
-		now := time.Now()
+		probeWarnings.Delete(auth.ID)
 		if meters := coreauth.ParseClaudeUsageMeters(body, now); len(meters) > 0 {
 			state.ObserveMeters(auth.ID, "claude", meters, now)
 		}
@@ -109,6 +111,32 @@ func (s *Service) fetchClaudeUsage(ctx context.Context, auth *coreauth.Auth, tok
 		return nil, &usageProbeStatusError{status: resp.StatusCode}
 	}
 	return body, nil
+}
+
+// probeWarnings holds the last failure warned about for each account. A
+// failing account has no fresh reading, so it is probed again every minute;
+// it is warned about once per meterProbeMaxAge, or again when the error changes.
+var probeWarnings sync.Map // auth ID -> probeWarning
+
+type probeWarning struct {
+	msg string
+	at  time.Time
+}
+
+// warnProbeFailure logs a failed probe at Warn, or at Debug when the same
+// error was warned about for the account within meterProbeMaxAge. It reports
+// whether it warned.
+func warnProbeFailure(authID string, errProbe error, now time.Time) bool {
+	msg := errProbe.Error()
+	if last, ok := probeWarnings.Load(authID); ok {
+		if warned := last.(probeWarning); warned.msg == msg && now.Sub(warned.at) < meterProbeMaxAge {
+			log.WithField("auth", authID).Debugf("claude usage probe: %v", errProbe)
+			return false
+		}
+	}
+	probeWarnings.Store(authID, probeWarning{msg: msg, at: now})
+	log.WithField("auth", authID).Warnf("claude usage probe failed, keeping the last reading: %v", errProbe)
+	return true
 }
 
 type usageProbeStatusError struct{ status int }
