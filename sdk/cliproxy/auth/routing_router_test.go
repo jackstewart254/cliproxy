@@ -565,3 +565,48 @@ func TestMeterWithoutUtilizationStaysUnknown(t *testing.T) {
 		t.Fatalf("round trip of %s = %+v, want unknown kept", raw, back)
 	}
 }
+
+// A reset-only header for the next window must not carry the ended window's
+// share onto it: the new window starts at a known zero with no old status.
+func TestUnknownReadingAfterResetStartsTheNewWindowAtZero(t *testing.T) {
+	state := newTestRoutingState(routerTestNow)
+	reset := routerTestNow.Add(time.Hour)
+	next := reset.Add(weeklyQuotaWindow)
+	observe := func(auth *Auth, at time.Time, fields map[string]string) {
+		headers := http.Header{}
+		for key, value := range fields {
+			headers.Set("Anthropic-Ratelimit-Unified-7d-"+key, value)
+		}
+		state.observeResult(Result{AuthID: auth.ID, Provider: "claude", Success: true}, headers, at)
+	}
+	unix := func(at time.Time) string { return strconv.FormatInt(at.Unix(), 10) }
+
+	// 99% used, the reset passes, then a header names only the next reset.
+	full := routerTestAuth("auth-full", "claude", "full@example.com")
+	observe(full, routerTestNow, map[string]string{"Utilization": "0.99", "Reset": unix(reset), "Status": "allowed"})
+	later := routerTestNow.Add(2 * time.Hour)
+	observe(full, later, map[string]string{"Reset": unix(next), "Status": "allowed"})
+	week := state.account(full.ID).Meters["7d"]
+	if week.UtilizationUnknown || week.Utilization != 0 || !week.ResetAt.Equal(next) || !week.ObservedAt.Equal(reset) || week.Status != "allowed" {
+		t.Fatalf("meter = %+v, want a known 0 read at the reset, with the next reset", week)
+	}
+	if view := state.Dashboard([]*Auth{full}, later).Accounts[full.ID].Meters[0]; view.Utilization == nil || *view.Utilization != 0 || view.ResetSinceReading {
+		t.Fatalf("dashboard meter = %+v, want a fresh 0", view)
+	}
+	if c := NewScoredSelector(ScorerConfig{}, state).assess(full, "claude-opus-5-5", 0, later); c.Excluded || !strings.Contains(c.Summary, "100% of") {
+		t.Fatalf("candidate = %+v, want 100%% of the week left", c)
+	}
+
+	// Rejected, and the upstream has moved to the next window before the
+	// stored reset: the old verdict must not keep the account out.
+	rejected := routerTestAuth("auth-rejected", "claude", "rejected@example.com")
+	observe(rejected, routerTestNow, map[string]string{"Utilization": "0.99", "Reset": unix(reset), "Status": "rejected"})
+	soon := routerTestNow.Add(30 * time.Minute)
+	observe(rejected, soon, map[string]string{"Reset": unix(next)})
+	if week = state.account(rejected.ID).Meters["7d"]; week.Status != "" || week.Utilization != 0 || !week.ObservedAt.Equal(soon) {
+		t.Fatalf("meter = %+v, want the old verdict and share dropped", week)
+	}
+	if c := NewScoredSelector(ScorerConfig{}, state).assess(rejected, "claude-opus-5-5", 0, soon); c.Excluded {
+		t.Fatalf("candidate = %+v, want it back in rotation", c)
+	}
+}
