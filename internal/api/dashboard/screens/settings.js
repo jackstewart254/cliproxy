@@ -15,7 +15,7 @@ export function view() {
         <h3>Connection</h3>
         <div class="setrow"><div class="k"><b>Address</b><span>Point Claude Code and Codex here instead of their own servers.</span></div><div class="v"><span class="mono">${esc(address)}</span><button class="iconbtn" data-copy aria-label="Copy address">${icon("copy")}</button></div></div>
         <div class="setrow"><div class="k"><b>Host</b><span>Every request leaves from this machine's home connection.</span></div><div class="v">${esc(server.host || "Unknown")}</div></div>
-        <div class="setrow"><div class="k"><b>Reachable from</b><span>Machines outside the tailnet cannot open this page or send requests.</span></div><div class="v">Your tailnet only</div></div>
+        <div class="setrow"><div class="k"><b>Reachable from</b><span>Other machines cannot open this page.</span></div><div class="v">This machine only</div></div>
         ${server.version ? `<div class="setrow"><div class="k"><b>Build</b><span>The commit this proxy was built from.</span></div><div class="v mono">${esc(server.version)}</div></div>` : ""}
       </div>
       <div class="setgrp">
