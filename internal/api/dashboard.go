@@ -13,7 +13,6 @@ import (
 	"sync"
 
 	"github.com/gin-gonic/gin"
-	"github.com/router-for-me/CLIProxyAPI/v8/internal/tailnetname"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/usagestats"
 	log "github.com/sirupsen/logrus"
 )
@@ -42,18 +41,15 @@ func (s *Server) dashboardAvailable() bool {
 	return cfg != nil && !cfg.Home.Enabled && !cfg.RemoteManagement.DisableControlPanel && s.managementRoutesEnabled.Load()
 }
 
-// fromLoopbackOrTailnet checks the TCP peer address, not forwarded headers, so
-// the read-only dashboard data is only visible on this host or over Tailscale.
-func fromLoopbackOrTailnet(remoteAddr string) bool {
+// fromLoopback checks the TCP peer address, not forwarded headers, so the
+// read-only dashboard data is only visible on this host.
+func fromLoopback(remoteAddr string) bool {
 	host, _, err := net.SplitHostPort(remoteAddr)
 	if err != nil {
 		host = remoteAddr
 	}
 	ip := net.ParseIP(host)
-	if ip == nil {
-		return false
-	}
-	return ip.IsLoopback() || tailnetname.IsTailnet(ip)
+	return ip != nil && ip.IsLoopback()
 }
 
 // serveDashboard serves the dashboard app's page.
@@ -83,14 +79,14 @@ func (s *Server) serveDashboardStatic(c *gin.Context) {
 }
 
 // serveDashboardData returns the read-only dashboard data without a management
-// key, but only to callers on this host or on the tailnet. Changing an
-// account still goes through the management API and needs the key.
+// key, but only to callers on this host. Changing an account still goes
+// through the management API and needs the key.
 func (s *Server) serveDashboardData(c *gin.Context) {
 	if !s.dashboardAvailable() || s.mgmt == nil {
 		c.AbortWithStatus(http.StatusNotFound)
 		return
 	}
-	if !fromLoopbackOrTailnet(c.Request.RemoteAddr) {
+	if !fromLoopback(c.Request.RemoteAddr) {
 		c.AbortWithStatus(http.StatusForbidden)
 		return
 	}
@@ -157,13 +153,13 @@ type dashboardSessionsRequest struct {
 
 // postDashboardSessions stores session titles and the sending machine's name
 // for the dashboard. Like the data endpoint it needs no key but only answers
-// callers on this host or on the tailnet.
+// callers on this host.
 func (s *Server) postDashboardSessions(c *gin.Context) {
 	if !s.dashboardAvailable() {
 		c.AbortWithStatus(http.StatusNotFound)
 		return
 	}
-	if !fromLoopbackOrTailnet(c.Request.RemoteAddr) {
+	if !fromLoopback(c.Request.RemoteAddr) {
 		c.AbortWithStatus(http.StatusForbidden)
 		return
 	}

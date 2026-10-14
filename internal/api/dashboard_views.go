@@ -40,8 +40,8 @@ func (s *Server) servesTLS() bool {
 // for plain connections too. X-Forwarded-Proto is not used,
 // because nothing in this server trusts it. An Origin of "null" (sandboxed
 // or file pages) fails. The server's CORS middleware allows every origin, so
-// this is what stops a page on another site, open in a browser on the
-// tailnet, from changing the views.
+// this is what stops a page on another site, open in a browser on this
+// host, from changing the views.
 func sameOrigin(r *http.Request, serverTLS bool) bool {
 	origin := r.Header.Get("Origin")
 	if origin == "" {
@@ -79,14 +79,14 @@ func effectivePort(port, scheme string) string {
 }
 
 // dashboardViewsAllowed applies the read-only dashboard's access rule to the
-// views endpoints: the dashboard must be on and the caller on this host or on
-// the tailnet. It writes the refusal and reports whether to go on.
+// views endpoints: the dashboard must be on and the caller on this host. It
+// writes the refusal and reports whether to go on.
 func (s *Server) dashboardViewsAllowed(c *gin.Context) bool {
 	if !s.dashboardAvailable() {
 		c.AbortWithStatus(http.StatusNotFound)
 		return false
 	}
-	if !fromLoopbackOrTailnet(c.Request.RemoteAddr) {
+	if !fromLoopback(c.Request.RemoteAddr) {
 		c.AbortWithStatus(http.StatusForbidden)
 		return false
 	}
