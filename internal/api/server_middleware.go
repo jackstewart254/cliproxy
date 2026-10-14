@@ -156,20 +156,16 @@ func corsMiddleware() gin.HandlerFunc {
 }
 
 // dashboardRequestAllowed keeps the key-less dashboard routes away from other
-// websites and DNS rebinding. The caller must be on this host or the tailnet,
-// and the Host must be a name no other site can point here: localhost, a
-// loopback or tailnet IP, or a MagicDNS *.ts.net name. Any Origin must be that
-// same host. No CORS headers are sent for /dashboard.
+// websites and DNS rebinding: the Host must be loopback, and any Origin must be
+// that same host. No CORS headers are sent for /dashboard.
 func dashboardRequestAllowed(r *http.Request) bool {
-	if !fromLoopbackOrTailnet(r.RemoteAddr) {
-		return false
-	}
 	host, _, err := net.SplitHostPort(r.Host)
 	if err != nil {
 		host = r.Host
 	}
-	host = strings.TrimSuffix(strings.ToLower(strings.Trim(host, "[]")), ".")
-	if host != "localhost" && !strings.HasSuffix(host, ".ts.net") && !fromLoopbackOrTailnet(host) {
+	switch strings.Trim(host, "[]") {
+	case "127.0.0.1", "localhost", "::1":
+	default:
 		return false
 	}
 	origin := r.Header.Get("Origin")
