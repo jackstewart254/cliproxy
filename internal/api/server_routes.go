@@ -59,7 +59,6 @@ func (s *Server) setupRoutes() {
 	s.engine.POST("/dashboard/sessions", s.postDashboardSessions)
 	s.engine.GET("/dashboard/views", s.getDashboardViews)
 	s.engine.PUT("/dashboard/views", s.putDashboardViews)
-	s.engine.GET("/dashboard/oauth/pending", s.getDashboardOAuthPending)
 	openaiHandlers := openai.NewOpenAIAPIHandler(s.handlers)
 	geminiHandlers := gemini.NewGeminiAPIHandler(s.handlers)
 	claudeCodeHandlers := claude.NewClaudeCodeAPIHandler(s.handlers)
