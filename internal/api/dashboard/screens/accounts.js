@@ -2,7 +2,7 @@
 // #/accounts/add opens the Add account drawer over it.
 import {
   S, esc, int, icon, logo, email, pill, warnState, accounts, status, limits, left, queue, plan, planDay, day,
-  meterCell, table, modeMenu, planMenu, modeTitle, MODES, api, setMode, toast, fetchData, accountScope,
+  meterCell, table, modeMenu, planMenu, modeTitle, MODES, api, setMode, toast, fetchData, accountScope, routingOrder, rankTitle,
 } from "../core.js";
 import { accountPicker, bindAccountPicker } from "./account-picker.js";
 
@@ -38,10 +38,11 @@ function weekCells(a) {
 export function view(ctx) {
   const keep = new Set(accountScope().ids);
   const all = accounts();
-  const ordered = ["claude", "codex"].flatMap((p) => { const q = queue(p); return [...q.order, ...q.rest]; });
+  const ordered = ["claude", "codex"].flatMap((p) => routingOrder(all.filter((a) => a.provider === p)));
   const list = ordered.filter((a) => keep.has(a.id));
   const next = nextIds();
   const cols = [
+    { label: "Priority", w: 56 },
     { label: "", w: 16, cls: "ic" },
     { label: "Account" },
     { label: "Week left", w: 120 },
@@ -59,6 +60,7 @@ export function view(ctx) {
       cls: "click",
       attrs: `data-href="#/accounts/${encodeURIComponent(a.id)}"`,
       cells: [
+        `<span class="${a.rank ? "" : "muted"}" title="${esc(rankTitle(a))}">${a.rank || "—"}</span>`,
         logo(a.provider),
         `${email(a.email)}${accountBadge(a, next)}`,
         wl, wr, planCell(a), sl,

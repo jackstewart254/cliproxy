@@ -1,7 +1,7 @@
 // Account details: limits and plan, the last 24 hours, its active sessions.
 import {
   S, esc, icon, logo, accountById, status, limits, left, plan, planDay, planDaysAway, inDays, resetLong,
-  modeMenu, planMenu, priorityMenu, modeTitle, sessions, warnState, seg, accounts,
+  modeMenu, planMenu, priorityMenu, modeTitle, sessions, warnState, seg, accounts, routingOrder, rankTitle,
 } from "../core.js";
 import { sessionTable } from "./common.js";
 import { allowanceSeries, trajectory, outlook, rateText } from "./burn.js";
@@ -69,6 +69,7 @@ export function view(ctx) {
     return { html: `<div class="bar"><div class="crumbs"><a href="#/accounts">Accounts</a>${icon("chevronRight", 14)}<span class="here">Not found</span></div></div><div class="body"><div class="empty">This account is not signed in on the proxy.</div></div>` };
   }
   const st = status(a);
+  const r = routingOrder(accounts().filter((x) => x.provider === a.provider)).find((x) => x.id === a.id);
   const lim = limits(a);
   const sc = oneScope(a);
   const strip = timeStrip({ key: "acStrip:" + a.id, sc });
@@ -86,7 +87,7 @@ export function view(ctx) {
       <div class="crumbs"><a href="#/accounts">Accounts</a>${icon("chevronRight", 14)}<span class="here">${logo(a.provider, "sm")}<span class="clamp">${esc(a.email)}</span></span></div>
       <div class="end">
         <button class="modebtn" data-mode><span class="k">Mode</span><span class="v">${esc(modeTitle(a.mode))}</span>${icon("chevronDown", 14, "var(--muted-fg)")}</button>
-        <button class="modebtn" data-priority><span class="k">Priority</span><span class="v">${esc(a.priority)}</span></button>
+        <button class="modebtn" data-priority title="${esc(rankTitle(r))}"><span class="k">Priority</span><span class="v">${esc(a.priority)}${r.rank ? " · #" + r.rank : ""}</span></button>
         <button class="iconbtn" data-more aria-label="More">${icon("more")}</button>
       </div>
     </div>

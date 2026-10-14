@@ -1039,6 +1039,24 @@ export async function setMode(acct, want) {
   if (want !== "off") await api("/credentials/fields", { method: "PATCH", body: JSON.stringify({ name: acct.name || acct.id, priority: want === "reserve" ? (p < 0 ? p : -1) : Math.max(0, p) }) });
 }
 
+// One provider's accounts in the order the scheduler picks them: enabled
+// accounts by priority high to low, then auth ID in byte order. Fill-first
+// uses one at a time, so each gets its own rank; other strategies rotate
+// equal priorities, so those share a rank (1, 1, 3). `after` is the rank
+// used just before (0 for the first). Off accounts get rank 0, last.
+export function routingOrder(list, strategy = S.data?.routing?.strategy) {
+  const off = (a) => a.disabled || a.mode === "off";
+  const on = list.filter((a) => !off(a)).sort((a, b) => b.priority - a.priority || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  let rank = 0, after = 0;
+  const ranked = on.map((a, i) => {
+    if (strategy === "fill-first" || !i || a.priority !== on[i - 1].priority) { after = rank; rank = i + 1; }
+    return { ...a, rank, after };
+  });
+  return [...ranked, ...list.filter(off).map((a) => ({ ...a, rank: 0, after: 0 }))];
+}
+
+export const rankTitle = (a) => "Priority " + a.priority + " · " + (!a.rank ? "Off, never used" : a.after ? "used after #" + a.after : "used first");
+
 export const MODES = [
   { id: "rotation", a: "Rotation", b: "Takes new sessions" },
   { id: "reserve", a: "Reserve", b: "Only once the others run out" },

@@ -296,3 +296,23 @@ test('a mode change keeps a custom priority that has the same sign', async () =>
     S.key = '';
   }
 });
+
+test('routing ranks follow the scheduler: priority high to low, then auth ID in byte order', async () => {
+  const { routingOrder, rankTitle } = await import('../../internal/api/dashboard/core.js');
+  const acct = (id, priority, mode = priority < 0 ? 'reserve' : 'rotation') => ({ id, priority, mode });
+  const list = [acct('c.json', 0), acct('off.json', 9, 'off'), acct('a.json', 0), acct('r.json', -1), acct('B.json', 0), acct('top.json', 10)];
+  const ff = routingOrder(list, 'fill-first');
+  // Byte order puts "B" before "a"; localeCompare would not.
+  assert.deepEqual(ff.map((a) => [a.id, a.rank]), [['top.json', 1], ['B.json', 2], ['a.json', 3], ['c.json', 4], ['r.json', 5], ['off.json', 0]]);
+  assert.equal(rankTitle(ff[0]), 'Priority 10 · used first');
+  assert.equal(rankTitle(ff[1]), 'Priority 0 · used after #1');
+  assert.equal(rankTitle(ff[4]), 'Priority -1 · used after #4');
+  assert.equal(rankTitle(ff[5]), 'Priority 9 · Off, never used');
+  // Other strategies rotate equal priorities, so they share a rank.
+  const rr = routingOrder(list, 'round-robin');
+  assert.deepEqual(rr.map((a) => [a.id, a.rank]), [['top.json', 1], ['B.json', 2], ['a.json', 2], ['c.json', 2], ['r.json', 5], ['off.json', 0]]);
+  assert.equal(rankTitle(rr[4]), 'Priority -1 · used after #2');
+  assert.deepEqual(routingOrder([acct('x', 0), acct('y', 0), acct('z', -3)], 'round-robin').map((a) => a.rank), [1, 1, 3]);
+  // A disabled flag counts as Off whatever the mode says.
+  assert.equal(routingOrder([{ id: 'd', priority: 5, mode: 'rotation', disabled: true }], 'fill-first')[0].rank, 0);
+});
