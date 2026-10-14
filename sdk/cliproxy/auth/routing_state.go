@@ -339,27 +339,35 @@ func (s *RoutingState) observeResult(result Result, headers http.Header, now tim
 	s.dirty = true
 }
 
-// mergeMeters folds observed meters into an account and its history.
+// mergeMeters folds observed meters into an account and its history. An
+// observation without a used share keeps the last known one, and its reading
+// time, and only refreshes the reset, window and any status it carries.
 func mergeMeters(account *accountRouting, meters map[string]*Meter, model string, now time.Time) {
 	for name, observed := range meters {
 		existing := account.Meters[name]
 		if existing == nil {
-			existing = &Meter{Name: name}
+			existing = &Meter{Name: name, UtilizationUnknown: true}
 			account.Meters[name] = existing
 		}
-		existing.Utilization = observed.Utilization
 		if !observed.ResetAt.IsZero() {
 			existing.ResetAt = observed.ResetAt
 		}
 		if observed.Window > 0 {
 			existing.Window = observed.Window
 		}
-		existing.Status = observed.Status
 		if observed.Label != "" {
 			existing.Label = observed.Label
 		}
-		existing.ObservedAt = now
 		existing.Models = addMeterModel(existing.Models, model)
+		if observed.UtilizationUnknown {
+			if observed.Status != "" {
+				existing.Status = observed.Status
+			}
+			continue
+		}
+		existing.Utilization, existing.UtilizationUnknown = observed.Utilization, false
+		existing.Status = observed.Status
+		existing.ObservedAt = now
 		account.History[name] = appendMeterSample(account.History[name], MeterSample{At: now, Utilization: observed.Utilization})
 	}
 }

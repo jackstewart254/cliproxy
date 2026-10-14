@@ -30,9 +30,10 @@ type RouterAccountView struct {
 
 // MeterView is one meter as the dashboard draws it.
 type MeterView struct {
-	Name          string    `json:"name"`
-	Title         string    `json:"title"`
-	Utilization   float64   `json:"utilization"`
+	Name  string `json:"name"`
+	Title string `json:"title"`
+	// Utilization is null while the meter has no known used share.
+	Utilization   *float64  `json:"utilization"`
 	ResetAt       time.Time `json:"reset_at,omitempty"`
 	WindowSeconds int64     `json:"window_seconds,omitempty"`
 	Status        string    `json:"status,omitempty"`
@@ -88,7 +89,7 @@ func (s *RoutingState) Dashboard(auths []*Auth, now time.Time) RouterView {
 			meterView := MeterView{
 				Name:              meter.Name,
 				Title:             meterTitle(provider, meter),
-				Utilization:       effective.Utilization,
+				Utilization:       knownUtilization(effective),
 				ResetAt:           effective.ResetAt,
 				WindowSeconds:     int64(meter.Window / time.Second),
 				Status:            effective.Status,
@@ -130,6 +131,14 @@ func (s *RoutingState) Dashboard(auths []*Auth, now time.Time) RouterView {
 	summary := s.shadowSummary(now, 10)
 	view.Shadow = &summary
 	return view
+}
+
+// knownUtilization is the meter's used share, or nil when it is unknown.
+func knownUtilization(meter Meter) *float64 {
+	if meter.UtilizationUnknown {
+		return nil
+	}
+	return &meter.Utilization
 }
 
 // meterOrder puts the 5-hour window first, the shared week second and any
