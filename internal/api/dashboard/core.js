@@ -909,7 +909,10 @@ export function seg(items, active, attr, cls = "") {
 // cols: [{label, w (px) or grow, r (right aligned), cls}]; rows: [{cells: [html], href, cls, attrs}]
 export function table(cols, rows, opts = {}) {
   const cell = (c, html, i) => {
-    const style = c.w ? `style="width:${c.w}px;flex:0 0 ${c.w}px"` : "";
+    // opts.fit lets sized columns shrink to c.min (default 70%) instead of scrolling sideways.
+    const style = !c.w ? "" : opts.fit
+      ? `style="width:${c.w}px;flex:0 1 ${c.w}px;min-width:${c.min ?? Math.round(c.w * 0.7)}px"`
+      : `style="width:${c.w}px;flex:0 0 ${c.w}px"`;
     return `<div class="c ${c.w ? "" : "g"} ${c.r ? "r" : ""} ${c.cls || ""}" ${style}>${html ?? ""}</div>`;
   };
   const head = opts.noHead ? "" : `<div class="tr head">${cols.map((c, i) => cell(c, esc(c.label || ""), i)).join("")}</div>`;
@@ -920,7 +923,7 @@ export function table(cols, rows, opts = {}) {
     return `<${tag} class="tr ${r.cls || ""}"${href} ${r.attrs || ""}>${cols.map((c, i) => cell(c, r.cells[i], i)).join("")}</${tag}>`;
   }).join("");
   const empty = !rows.length && opts.empty ? `<div class="empty">${esc(opts.empty)}</div>` : "";
-  return `<div class="tblwrap"><div class="tbl">${head}${body}</div></div>${empty}`;
+  return `<div class="tblwrap ${opts.cls || ""}"><div class="tbl">${head}${body}</div></div>${empty}`;
 }
 
 export function figure(label, value, unit = "", opts = {}) {

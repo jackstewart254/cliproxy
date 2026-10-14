@@ -42,16 +42,16 @@ export function view(ctx) {
   const list = ordered.filter((a) => keep.has(a.id));
   const next = nextIds();
   const cols = [
-    { label: "Priority", w: 56 },
-    { label: "", w: 16, cls: "ic" },
+    { label: "Priority", w: 56, min: 52 },
+    { label: "", w: 16, min: 16, cls: "ic" },
     { label: "Account" },
     { label: "Week left", w: 120 },
     { label: "Week resets", w: 104 },
-    { label: "Plan renews", w: 128 },
+    { label: "Plan renews", w: 128, cls: "plancol" },
     { label: "5 hours left", w: 120 },
     { label: "Requests today", w: 96, r: true },
     { label: "Mode", w: 104, cls: "modecol" },
-    { label: "", w: 20 },
+    { label: "", w: 20, min: 20 },
   ];
   const rows = list.map((a) => {
     const [wl, wr, sl] = weekCells(a);
@@ -73,7 +73,7 @@ export function view(ctx) {
   const html = `
     <div class="bar"><div class="end"><a class="btn" href="#/accounts/add">${icon("plus", 14, "var(--fg)")}Add account</a>${accountPicker()}</div></div>
     <div class="body">
-      ${table(cols, rows, { empty: "No accounts signed in yet." })}
+      ${table(cols, rows, { empty: "No accounts signed in yet.", fit: true, cls: "acctbl" })}
       <div class="tfoot">${list.length} of ${all.length}</div>
     </div>
     ${ctx.add ? drawer() : ""}`;
