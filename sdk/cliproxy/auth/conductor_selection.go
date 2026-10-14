@@ -659,15 +659,17 @@ func selectionArgForSelector(selector Selector, routeModel string) string {
 	return routeModel
 }
 
-func selectorContextForAvailableAuths(ctx context.Context, selector Selector, routeModel string) context.Context {
+func (m *Manager) selectorContextForAvailableAuths(ctx context.Context, selector Selector, routeModel string) context.Context {
 	ctx = withWeightedSelectorStateModel(ctx, selector, routeModel)
-	if !isBuiltInSelector(selector) {
-		if _, sessionAffinity := selector.(*SessionAffinitySelector); !sessionAffinity {
-			return ctx
-		}
+	_, sessionAffinity := selector.(*SessionAffinitySelector)
+	if !isBuiltInSelector(selector) && !sessionAffinity {
+		return ctx
 	}
 	if ctx == nil {
 		ctx = context.Background()
+	}
+	if sessionAffinity {
+		ctx = context.WithValue(ctx, sessionAuthLookupKey{}, m.GetByID)
 	}
 	return context.WithValue(ctx, prevalidatedAuthCandidatesKey{}, true)
 }
@@ -1787,7 +1789,7 @@ func (m *Manager) pickNextLegacy(ctx context.Context, provider, model string, op
 		return nil, nil, errPick
 	}
 	if !handled {
-		selectorCtx := selectorContextForAvailableAuths(ctx, selector, model)
+		selectorCtx := m.selectorContextForAvailableAuths(ctx, selector, model)
 		selected, errPick = selector.Pick(selectorCtx, provider, selectionArgForSelector(selector, model), opts, selectorAuths)
 		if errPick != nil {
 			if isBuiltInSelector(selector) {
@@ -2121,7 +2123,7 @@ func (m *Manager) pickNextMixedLegacy(ctx context.Context, providers []string, m
 		return nil, nil, "", errPick
 	}
 	if !handled {
-		selectorCtx := selectorContextForAvailableAuths(ctx, selector, model)
+		selectorCtx := m.selectorContextForAvailableAuths(ctx, selector, model)
 		selected, errPick = selector.Pick(selectorCtx, "mixed", selectionArgForSelector(selector, model), opts, selectorAuths)
 		if errPick != nil {
 			if isBuiltInSelector(selector) {

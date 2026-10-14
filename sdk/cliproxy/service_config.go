@@ -31,6 +31,8 @@ type routingRuntimeState struct {
 	sessionAffinity          bool
 	sessionAffinityTTL       time.Duration
 	sessionAffinitySubagents bool
+	// sessionAffinityRebindOnQuota moves a bound session only on an account-wide quota limit.
+	sessionAffinityRebindOnQuota bool
 	// primeAfterReset is the sorted, comma-joined provider list, kept as a string
 	// so the state stays comparable.
 	primeAfterReset string
@@ -85,6 +87,13 @@ func normalizedRoutingRuntimeState(cfg *config.Config) routingRuntimeState {
 	if state.sessionAffinity && cfg.Routing.SessionAffinitySubagents != nil {
 		state.sessionAffinitySubagents = *cfg.Routing.SessionAffinitySubagents
 	}
+	switch strings.ToLower(strings.TrimSpace(cfg.Routing.SessionAffinityRebindOn)) {
+	case "", "any":
+	case "quota":
+		state.sessionAffinityRebindOnQuota = state.sessionAffinity
+	default:
+		log.Warnf("unknown routing.session-affinity-rebind-on %q, using \"any\"", cfg.Routing.SessionAffinityRebindOn)
+	}
 	return state
 }
 
@@ -119,6 +128,7 @@ func newRoutingSelector(state routingRuntimeState) coreauth.Selector {
 			Fallback:         selector,
 			TTL:              state.sessionAffinityTTL,
 			SubagentAffinity: &subagents,
+			RebindOnQuota:    state.sessionAffinityRebindOnQuota,
 		})
 		routing.AttachSessionCache(affinity.SessionCache())
 		selector = affinity
