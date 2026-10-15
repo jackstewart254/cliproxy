@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Keeps an SSH local forward from this Mac's 127.0.0.1:18317 to the PC's
+  loopback-only proxy (127.0.0.1:8317 on jacks-desktop), so the dashboard's
+  Devices tab can read the PC. See docs/devices.md to enable it.
+-->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.jackstewart.cliproxy-pc-tunnel</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/usr/bin/ssh</string>
+		<string>-N</string>
+		<string>-o</string>
+		<string>ServerAliveInterval=30</string>
+		<string>-o</string>
+		<string>ExitOnForwardFailure=yes</string>
+		<string>-L</string>
+		<string>18317:127.0.0.1:8317</string>
+		<string>jacks-desktop</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>ThrottleInterval</key>
+	<integer>30</integer>
+	<key>StandardOutPath</key>
+	<string>/Users/jackstewart/Library/Logs/cliproxy-pc-tunnel.log</string>
+	<key>StandardErrorPath</key>
+	<string>/Users/jackstewart/Library/Logs/cliproxy-pc-tunnel.log</string>
+</dict>
+</plist>

@@ -6,12 +6,15 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
 	managementHandlers "github.com/router-for-me/CLIProxyAPI/v8/internal/api/handlers/management"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/sysstats"
 )
 
 func TestFromLoopback(t *testing.T) {
@@ -143,5 +146,68 @@ func TestServeDashboardApp(t *testing.T) {
 	server.managementRoutesEnabled.Store(false)
 	if rec := get("/dashboard/static/app.js"); rec.Code != http.StatusNotFound {
 		t.Fatalf("dashboard off: status %d, want 404", rec.Code)
+	}
+}
+
+// The Devices tab reads this host, and each configured device through that
+// device's own management route with its key. A device that is down, or that
+// refuses the key, shows offline with the reason.
+func TestServeDashboardDevices(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("remote-management: {secret-key: pc-key}\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	pcCfg, err := config.LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pc := &Server{cfg: pcCfg, engine: gin.New(), mgmt: managementHandlers.NewHandler(pcCfg, path, nil)}
+	pc.managementRoutesEnabled.Store(true)
+	pc.registerManagementRoutes()
+	remote := httptest.NewServer(pc.engine)
+	defer remote.Close()
+	gone := httptest.NewServer(http.NotFoundHandler())
+	gone.Close()
+
+	cfg := &config.Config{}
+	cfg.RemoteManagement.Devices = []config.Device{
+		{Name: "pc", URL: remote.URL, ManagementKey: "pc-key"},
+		{Name: "wrong-key", URL: remote.URL, ManagementKey: "nope"},
+		{Name: "down", URL: gone.URL, ManagementKey: "pc-key"},
+	}
+	mac := &Server{cfg: cfg, mgmt: managementHandlers.NewHandler(cfg, "", nil)}
+	mac.managementRoutesEnabled.Store(true)
+	rec := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(rec)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/dashboard/devices", nil)
+	ctx.Request.RemoteAddr = "127.0.0.1:5000"
+	mac.serveDashboardDevices(ctx)
+
+	var reply struct {
+		Devices []struct {
+			ID     string
+			Online bool
+			Error  string
+			Stats  *sysstats.Stats
+		}
+	}
+	if err = json.Unmarshal(rec.Body.Bytes(), &reply); err != nil || rec.Code != http.StatusOK || len(reply.Devices) != 4 {
+		t.Fatalf("status %d, %v, body %s", rec.Code, err, rec.Body.String())
+	}
+	local, pcDev, wrong, down := reply.Devices[0], reply.Devices[1], reply.Devices[2], reply.Devices[3]
+	st := local.Stats
+	if local.ID != "local" || !local.Online || st == nil || st.CPU.Cores == 0 || len(st.CPU.PerCore) != st.CPU.Cores ||
+		st.Memory.Total == 0 || st.Headroom.MemoryAvailable == 0 || st.Processes == 0 || len(st.TopCPU) == 0 || len(st.TopMemory) == 0 || st.TopMemory[0].RSS == 0 {
+		t.Fatalf("local reading incomplete: %+v", local)
+	}
+	if !pcDev.Online || pcDev.Stats == nil || pcDev.Stats.Hostname != st.Hostname {
+		t.Fatalf("pc: %+v, want its reading fetched with its key", pcDev)
+	}
+	if wrong.Online || !strings.Contains(wrong.Error, "invalid management key") {
+		t.Fatalf("wrong key: %+v, want offline with the refusal", wrong)
+	}
+	if down.Online || !strings.Contains(down.Error, "unreachable") {
+		t.Fatalf("down: %+v, want offline and unreachable", down)
 	}
 }

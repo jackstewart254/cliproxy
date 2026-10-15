@@ -331,6 +331,17 @@ type RemoteManagement struct {
 	PanelGitHubRepository string `yaml:"panel-github-repository"`
 	// BaseURL specifies the base URL of the remote management API for TUI client mode (e.g. "https://proxy.example.com").
 	BaseURL string `yaml:"base-url,omitempty" json:"base-url,omitempty"`
+	// Devices lists other machines running this proxy whose host load the
+	// dashboard's Devices tab shows. This server fetches their stats, so a
+	// device's management key never reaches the browser.
+	Devices []Device `yaml:"devices,omitempty" json:"-"`
+}
+
+// Device is another machine's proxy, reached at URL with its management key.
+type Device struct {
+	Name          string `yaml:"name"`
+	URL           string `yaml:"url"`
+	ManagementKey string `yaml:"management-key"`
 }
 
 // QuotaExceeded defines the behavior when API quota limits are exceeded.

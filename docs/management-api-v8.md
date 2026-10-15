@@ -89,6 +89,7 @@ retain the corresponding business operation's fields.
 | --- | --- | --- |
 | `/config/upstream/<provider>` | GET, PUT, PATCH, DELETE | Manage shared provider settings. |
 | `/server/latest-version` | GET | Get latest release information. |
+| `/server/system` | GET | Read the load on this proxy's host: CPU (total, per core), load average (not on Windows), memory, swap, disks, process and thread counts, the 15 busiest processes by CPU and by memory, and headroom (idle CPU, free memory). CPU percentages cover the time since the previous reading, or a fresh 250 ms sample when that is over 10 s old; calls within 1 s share a reading. |
 | `/requests/api-call` | POST | Make an authenticated upstream call. |
 | `/routing/cooldown/reset` | POST | Clear credential cooldown. |
 | `/routing/model-definitions/<channel>` | GET | Get model definitions. |
