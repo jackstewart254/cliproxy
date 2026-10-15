@@ -1,6 +1,6 @@
 // Devices: this machine and the other machines in the proxy's config, with
 // how busy each is and how much more work it can take. #/devices/<id> opens
-// one: cores, memory, disks and its busiest processes. Readings refresh every
+// one: cores, memory, GPUs, temperatures, disks and its busiest processes. Readings refresh every
 // few seconds while this tab is open and the page is in view.
 import { esc, int, icon, table, meterCell, clock } from "../core.js";
 import { region } from "../paint.js";
@@ -61,6 +61,15 @@ function platform(st) {
   return [name, st.platform_version].filter(Boolean).join(" ");
 }
 
+// Temperatures: amber from 80 °C, red from 90 °C.
+const deg = (c) => `<span class="devtemp ${c >= 90 ? "bad" : c >= 80 ? "warn" : ""}">${Math.round(Number(c) || 0)} °C</span>`;
+function hottest(st) {
+  const t = (st.temps || []).reduce((a, b) => (!a || b.celsius > a.celsius ? b : a), null);
+  return t ? `<span title="${esc(t.label + " is the hottest sensor")}">${deg(t.celsius)}</span>` : "";
+}
+// The busiest card's load; nothing on a machine without an NVIDIA card.
+const gpuLoad = (st) => (st.gpus?.length ? meterCell(Math.max(...st.gpus.map((g) => Number(g.percent) || 0))) : "");
+
 // How much more work a machine can take: the tighter of idle CPU and free memory.
 function room(st) {
   const h = st.headroom || {};
@@ -98,6 +107,8 @@ function listView() {
     { label: "Device" },
     { label: "CPU", w: 128 },
     { label: "Memory", w: 128 },
+    { label: "GPU", w: 128 },
+    { label: "Temp", w: 64, r: true },
     { label: "Room for work", w: 128 },
   ];
   const rows = D.list.map((d) => {
@@ -113,6 +124,8 @@ function listView() {
         `<span class="devname"><b class="clamp">${esc(d.name || d.id)}</b>${live(k + "sub", `<span class="clamp ${d.online ? "muted" : "warn"}" title="${esc(sub)}">${esc(sub)}</span>`)}</span>`,
         live(k + "cpu", d.online ? meterCell(st.cpu?.percent) : ""),
         live(k + "mem", d.online ? meterCell(st.memory?.percent) : ""),
+        live(k + "gpu", d.online ? gpuLoad(st) : ""),
+        live(k + "temp", d.online ? hottest(st) : ""),
         live(k + "room", d.online ? room(st) : ""),
       ],
     };
@@ -151,6 +164,26 @@ function diskTable(st) {
   return table(cols, rows, { empty: "No volumes reported." });
 }
 
+function gpuTable(st) {
+  const cols = [{ label: "Card" }, { label: "Load", w: 128 }, { label: "Memory", w: 128 }, { label: "Used", w: 136, r: true }, { label: "Temp", w: 64, r: true }, { label: "Power", w: 64, r: true }];
+  const rows = st.gpus.map((g) => ({
+    cells: [
+      `<span class="clamp">${esc(g.name)}</span>`,
+      meterCell(g.percent),
+      meterCell(g.memory_total ? (g.memory_used / g.memory_total) * 100 : 0),
+      esc(`${bytes(g.memory_used)} of ${bytes(g.memory_total)}`),
+      g.celsius ? deg(g.celsius) : "–",
+      g.watts ? `${Math.round(g.watts)} W` : "–",
+    ],
+  }));
+  return table(cols, rows, { fit: true, cls: "devtbl" });
+}
+
+function tempTable(st) {
+  const rows = st.temps.map((t) => ({ cells: [`<span class="clamp">${esc(t.label)}</span>`, deg(t.celsius)] }));
+  return table([{ label: "Sensor" }, { label: "Temperature", w: 120, r: true }], rows, {});
+}
+
 const PROC_COLS = [{ label: "Process" }, { label: "PID", w: 72, r: true }, { id: "cpu", label: "CPU", w: 88, r: true, title: "Share of one core" }, { id: "mem", label: "Memory", w: 96, r: true }, { label: "Threads", w: 72, r: true }];
 
 function procHead() {
@@ -183,6 +216,14 @@ function deviceView(id) {
       <div class="sech"><div class="t"><b>Cores</b>${live("dv|one|cores-n", `<span class="muted">${(st.cpu?.per_core || []).length} logical</span>`)}</div></div>
       ${live("dv|one|cores", `<div class="devcores">${cores(st)}</div>`)}
     </div>
+    ${st.gpus?.length ? `<div class="sec">
+      <div class="sech"><div class="t"><b>GPU</b></div></div>
+      ${live("dv|one|gpus", gpuTable(st))}
+    </div>` : ""}
+    ${st.temps?.length ? `<div class="sec">
+      <div class="sech"><div class="t"><b>Temperatures</b></div></div>
+      ${live("dv|one|temps", tempTable(st))}
+    </div>` : ""}
     <div class="sec">
       <div class="sech"><div class="t"><b>Busiest processes</b><span class="muted">Top ${(st.top_cpu || []).length}${partial(st) ? " of your processes" : ""}</span></div></div>
       ${procHead()}${live("dv|one|procs", procRows(st))}

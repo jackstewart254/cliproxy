@@ -19,6 +19,15 @@ On macOS, processes owned by other users (root, system daemons) cannot be read
 without root, so they are missing from the busiest-process lists and the
 thread count. CPU, memory and room for work still cover the whole machine.
 
+GPUs and temperatures come from tools the machine already has, read every
+5 seconds within 200 ms; a missing or slow tool leaves its part out:
+- NVIDIA cards (load, memory, temperature, power) from `nvidia-smi`.
+- macOS CPU and GPU temperatures from `smctemp` (Homebrew
+  `narugit/tap/smctemp`, as the /sysmon skill uses; no root needed).
+- Windows CPU temperature is not shown. Windows exposes no reliable Ryzen
+  temperature without a driver such as LibreHardwareMonitor, which is not
+  installed.
+
 ## Adding the Windows PC
 
 The PC's proxy stays loopback-only (127.0.0.1:8317). The Mac reaches it through

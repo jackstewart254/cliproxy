@@ -659,6 +659,8 @@ a.tr:hover, .tr.click:hover { background: var(--hover); cursor: pointer; }
 .room.ok { color: var(--ok-text); }
 .room.warn { color: var(--warn-text); }
 .room.bad { color: var(--error-text); }
+.devtemp { white-space: nowrap; }
+.devtemp.bad { color: var(--error-text); }
 .devstats { flex-wrap: wrap; row-gap: 20px; }
 .devstats .stat { min-width: 132px; }
 .devstats .meter { width: 100%; margin: 2px 0; }
