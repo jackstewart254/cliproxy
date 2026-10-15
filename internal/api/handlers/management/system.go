@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -32,7 +33,12 @@ func (h *Handler) GetSystem(c *gin.Context) {
 // Like the APICall timeout, it is a management call, not an upstream stream.
 const deviceTimeout = 3 * time.Second
 
-var deviceClient = &http.Client{Timeout: deviceTimeout}
+// deviceClient does not follow redirects: following one to another host
+// would hand it the device's management key.
+var deviceClient = &http.Client{
+	Timeout:       deviceTimeout,
+	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+}
 
 // deviceReply is one machine on the dashboard's Devices tab.
 type deviceReply struct {
@@ -43,11 +49,6 @@ type deviceReply struct {
 	Error  string          `json:"error,omitempty"`
 	Stats  *sysstats.Stats `json:"stats,omitempty"`
 }
-
-// rejectedDeviceKeys remembers url+key pairs a device refused. Asking again
-// with a refused key would get this host banned there after five tries, which
-// through a tunnel is the device's own loopback address.
-var rejectedDeviceKeys sync.Map
 
 // GetDashboardDevices returns this host's reading and each configured
 // device's. The server fetches a device's reading itself, so the device's
@@ -61,7 +62,7 @@ func (h *Handler) GetDashboardDevices(c *gin.Context) {
 	out := make([]deviceReply, len(devices)+1)
 	var wg sync.WaitGroup
 	for i, d := range devices {
-		wg.Go(func() { out[i+1] = fetchDevice(ctx, d) })
+		wg.Go(func() { out[i+1] = h.fetchDevice(ctx, strconv.Itoa(i+1), d) })
 	}
 	out[0] = deviceReply{ID: "local", Local: true}
 	if stats, err := sysstats.Read(ctx); err != nil {
@@ -73,16 +74,21 @@ func (h *Handler) GetDashboardDevices(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"devices": out})
 }
 
-func fetchDevice(ctx context.Context, d config.Device) deviceReply {
-	reply := deviceReply{ID: d.Name, Name: d.Name}
+// fetchDevice reads one device. Ids are positions in the config, so two
+// devices with one name, or one named "local", stay apart.
+func (h *Handler) fetchDevice(ctx context.Context, id string, d config.Device) deviceReply {
+	reply := deviceReply{ID: id, Name: d.Name}
 	pair := d.URL + "\x00" + d.ManagementKey
-	if _, refused := rejectedDeviceKeys.Load(pair); refused {
-		reply.Error = "it refused this proxy's management key; change management-key for it in this proxy's config to try again"
+	if _, refused := h.refusedDeviceKeys.Load(pair); refused {
+		reply.Error = "it refused this proxy's management key; fix management-key for it in this proxy's config to try again"
 		return reply
 	}
 	stats, status, err := deviceStats(ctx, d)
-	if status == http.StatusUnauthorized || status == http.StatusForbidden {
-		rejectedDeviceKeys.Store(pair, struct{}{})
+	// Only a wrong key (401) counts toward the device's ban, so only that
+	// stops the asking. A 403 (banned, management off) is not counted there
+	// and is asked again on the next poll.
+	if status == http.StatusUnauthorized {
+		h.refusedDeviceKeys.Store(pair, struct{}{})
 	}
 	if err != nil {
 		reply.Error = err.Error()

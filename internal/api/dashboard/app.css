@@ -646,10 +646,8 @@ a.tr:hover, .tr.click:hover { background: var(--hover); cursor: pointer; }
 .pop .pfoot button:hover { background: var(--surface-2); }
 
 /* Devices */
-.tblwrap.devtbl { container-type: inline-size; }
 .tblwrap.devtbl .tbl { min-width: 0; }
 .devtbl .meter { width: auto; flex: 1 1 64px; min-width: 24px; }
-@container (max-width: 640px) { .devtbl .c.devproc { display: none; } }
 .devname { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .devname b { font-weight: 500; }
 .devname span { font-size: 12px; }

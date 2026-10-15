@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -150,8 +151,9 @@ func TestServeDashboardApp(t *testing.T) {
 }
 
 // The Devices tab reads this host, and each configured device through that
-// device's own management route with its key. A device that is down, or that
-// refuses the key, shows offline with the reason.
+// device's own management route with its key. A device that is down or
+// refuses the key shows offline with the reason. A 403 (a ban) is asked again
+// on the next poll; a 401 (wrong key) is not, until the config reloads.
 func TestServeDashboardDevices(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	path := filepath.Join(t.TempDir(), "config.yaml")
@@ -165,7 +167,19 @@ func TestServeDashboardDevices(t *testing.T) {
 	pc := &Server{cfg: pcCfg, engine: gin.New(), mgmt: managementHandlers.NewHandler(pcCfg, path, nil)}
 	pc.managementRoutesEnabled.Store(true)
 	pc.registerManagementRoutes()
-	remote := httptest.NewServer(pc.engine)
+	var banned atomic.Bool
+	var wrongTries atomic.Int32
+	banned.Store(true)
+	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Management-Key") == "nope" {
+			wrongTries.Add(1)
+		} else if banned.CompareAndSwap(true, false) {
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = io.WriteString(w, `{"error":"IP banned due to too many failed attempts. Try again in 30m0s"}`)
+			return
+		}
+		pc.engine.ServeHTTP(w, r)
+	}))
 	defer remote.Close()
 	gone := httptest.NewServer(http.NotFoundHandler())
 	gone.Close()
@@ -178,36 +192,52 @@ func TestServeDashboardDevices(t *testing.T) {
 	}
 	mac := &Server{cfg: cfg, mgmt: managementHandlers.NewHandler(cfg, "", nil)}
 	mac.managementRoutesEnabled.Store(true)
-	rec := httptest.NewRecorder()
-	ctx, _ := gin.CreateTestContext(rec)
-	ctx.Request = httptest.NewRequest(http.MethodGet, "/dashboard/devices", nil)
-	ctx.Request.RemoteAddr = "127.0.0.1:5000"
-	mac.serveDashboardDevices(ctx)
-
-	var reply struct {
-		Devices []struct {
-			ID     string
-			Online bool
-			Error  string
-			Stats  *sysstats.Stats
+	type device struct {
+		ID     string
+		Online bool
+		Error  string
+		Stats  *sysstats.Stats
+	}
+	read := func() []device {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(rec)
+		ctx.Request = httptest.NewRequest(http.MethodGet, "/dashboard/devices", nil)
+		ctx.Request.RemoteAddr = "127.0.0.1:5000"
+		mac.serveDashboardDevices(ctx)
+		var reply struct{ Devices []device }
+		if errJSON := json.Unmarshal(rec.Body.Bytes(), &reply); errJSON != nil || rec.Code != http.StatusOK || len(reply.Devices) != 4 {
+			t.Fatalf("status %d, %v, body %s", rec.Code, errJSON, rec.Body.String())
 		}
+		return reply.Devices
 	}
-	if err = json.Unmarshal(rec.Body.Bytes(), &reply); err != nil || rec.Code != http.StatusOK || len(reply.Devices) != 4 {
-		t.Fatalf("status %d, %v, body %s", rec.Code, err, rec.Body.String())
-	}
-	local, pcDev, wrong, down := reply.Devices[0], reply.Devices[1], reply.Devices[2], reply.Devices[3]
-	st := local.Stats
+
+	first := read()
+	local, st := first[0], first[0].Stats
 	if local.ID != "local" || !local.Online || st == nil || st.CPU.Cores == 0 || len(st.CPU.PerCore) != st.CPU.Cores ||
 		st.Memory.Total == 0 || st.Headroom.MemoryAvailable == 0 || st.Processes == 0 || len(st.TopCPU) == 0 || len(st.TopMemory) == 0 || st.TopMemory[0].RSS == 0 {
 		t.Fatalf("local reading incomplete: %+v", local)
 	}
-	if !pcDev.Online || pcDev.Stats == nil || pcDev.Stats.Hostname != st.Hostname {
-		t.Fatalf("pc: %+v, want its reading fetched with its key", pcDev)
+	if pcDev := first[1]; pcDev.ID != "1" || pcDev.Online || !strings.Contains(pcDev.Error, "IP banned") {
+		t.Fatalf("banned pc: %+v, want offline with the ban", pcDev)
 	}
-	if wrong.Online || !strings.Contains(wrong.Error, "invalid management key") {
+	if wrong := first[2]; wrong.Online || !strings.Contains(wrong.Error, "invalid management key") {
 		t.Fatalf("wrong key: %+v, want offline with the refusal", wrong)
 	}
-	if down.Online || !strings.Contains(down.Error, "unreachable") {
+	if down := first[3]; down.Online || !strings.Contains(down.Error, "unreachable") {
 		t.Fatalf("down: %+v, want offline and unreachable", down)
+	}
+
+	second := read()
+	if pcDev := second[1]; !pcDev.Online || pcDev.Stats == nil || pcDev.Stats.Hostname != st.Hostname {
+		t.Fatalf("pc after the ban: %+v, want its reading fetched with its key", pcDev)
+	}
+	if wrong := second[2]; wrong.Online || !strings.Contains(wrong.Error, "refused") || wrongTries.Load() != 1 {
+		t.Fatalf("wrong key again: %+v after %d tries, want it not asked again", wrong, wrongTries.Load())
+	}
+	mac.mgmt.SetConfig(cfg)
+	read()
+	if wrongTries.Load() != 2 {
+		t.Fatalf("after a config reload the wrong key was tried %d times in all, want 2", wrongTries.Load())
 	}
 }

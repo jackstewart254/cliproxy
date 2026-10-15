@@ -288,23 +288,14 @@ func hostInfo(ctx context.Context) *Stats {
 	return s
 }
 
-// readDisks lists the volumes worth showing. On macOS the system's own
-// volumes and the simulator images are left out, and APFS volumes sharing a
+// readDisks reads each volume mounts lists. APFS volumes sharing a
 // container (same size and free space) show once.
-// ponytail: a dead network drive on Windows can stall this; it runs once a
-// minute under a deadline, skip DRIVE_REMOTE if that ever bites.
 func readDisks(ctx context.Context) []Disk {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	// Windows returns per-drive warnings as an error next to the list.
-	parts, _ := disk.PartitionsWithContext(ctx, false)
 	seen := make(map[[2]uint64]bool)
 	var out []Disk
-	for _, p := range parts {
-		m := p.Mountpoint
-		if m == "" || p.Fstype == "devfs" || p.Fstype == "autofs" || strings.HasPrefix(m, "/System/Volumes/") || strings.Contains(m, "/CoreSimulator/") {
-			continue
-		}
+	for _, m := range mounts(ctx) {
 		u, err := disk.UsageWithContext(ctx, m)
 		if err != nil || u.Total == 0 || seen[[2]uint64{u.Total, u.Free}] {
 			continue

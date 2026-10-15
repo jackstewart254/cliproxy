@@ -69,6 +69,9 @@ function room(st) {
   const title = `${(Number(h.idle_cores) || 0).toFixed(1)} of ${st.cpu?.cores || 0} cores idle, ${bytes(h.memory_available)} of ${bytes(st.memory?.total)} memory free`;
   return `<span class="room ${cls}" title="${esc(title)}"><i></i>${text}</span>`;
 }
+// macOS lets a user read only their own processes' threads and usage, so
+// the thread count and the busiest lists leave other users' processes out.
+const partial = (st) => st.os === "darwin" && st.unreadable > 0;
 const dot = (on) => `<i class="devdot ${on ? "on" : ""}" role="img" aria-label="${on ? "Online" : "Offline"}"></i>`;
 
 // A live piece of the screen: replaced on each reading without touching
@@ -96,8 +99,6 @@ function listView() {
     { label: "CPU", w: 128 },
     { label: "Memory", w: 128 },
     { label: "Room for work", w: 128 },
-    { label: "Processes", w: 80, r: true, cls: "devproc" },
-    { label: "Threads", w: 80, r: true, cls: "devproc" },
   ];
   const rows = D.list.map((d) => {
     const st = d.stats || {};
@@ -113,8 +114,6 @@ function listView() {
         live(k + "cpu", d.online ? meterCell(st.cpu?.percent) : ""),
         live(k + "mem", d.online ? meterCell(st.memory?.percent) : ""),
         live(k + "room", d.online ? room(st) : ""),
-        live(k + "procs", d.online ? int(st.processes) : ""),
-        live(k + "threads", d.online ? int(st.threads) : ""),
       ],
     };
   });
@@ -135,7 +134,7 @@ function statsStrip(st) {
     l ? stat("Load", (Number(l.load1) || 0).toFixed(2), esc(`5 min ${(Number(l.load5) || 0).toFixed(2)} · 15 min ${(Number(l.load15) || 0).toFixed(2)}`)) : "",
     stat("Memory", pct(m.percent), esc(`${bytes(m.used)} of ${bytes(m.total)}`), { meter: m.percent }),
     stat("Swap", sw.total ? pct(sw.percent) : "–", esc(sw.total ? `${bytes(sw.used)} of ${bytes(sw.total)}` : "None"), { meter: sw.total ? sw.percent : 0 }),
-    stat("Processes", int(st.processes), esc(int(st.threads) + " threads"), { title: st.unreadable ? `${int(st.unreadable)} processes belong to other users and cannot be read without root; their threads are not counted.` : "" }),
+    stat("Processes", int(st.processes), esc(int(st.threads) + (partial(st) ? " threads in your processes" : " threads")), { title: partial(st) ? `${int(st.unreadable)} processes belong to other users and cannot be read without root, so their threads are not counted and they are not among the busiest.` : "" }),
     stat("Room for work", room(st), esc(`${(Number(h.idle_cores) || 0).toFixed(1)} cores idle · ${bytes(h.memory_available)} free`)),
   ].join("");
 }
@@ -173,7 +172,7 @@ function deviceView(id) {
   const d = (D.list || []).find((x) => x.id === id);
   const crumbs = (name, on) => `<div class="crumbs"><a href="#/devices">Devices</a>${icon("chevronRight", 14)}<span class="here">${on == null ? "" : live("dv|one|dot", dot(on))}<span class="clamp">${esc(name)}</span></span></div>`;
   if (!D.list) return shell(crumbs(id), "", `<div class="empty">${D.error ? "" : "Reading the device…"}</div>`);
-  if (!d) return shell(crumbs(id), "", `<div class="empty">No device by this name. Devices come from management.devices in the proxy's config.</div>`);
+  if (!d) return shell(crumbs(id), "", `<div class="empty">No such device. Devices come from management.devices in the proxy's config.</div>`);
   if (!d.online) return shell(crumbs(d.name || d.id, false), readNote(), `<div class="empty">${esc(d.local ? "This machine" : d.name)} is offline. ${esc(sentence(d.error || ""))}</div>`);
   const st = d.stats;
   // Phones keep the device name and the reading time in the bar.
@@ -185,7 +184,7 @@ function deviceView(id) {
       ${live("dv|one|cores", `<div class="devcores">${cores(st)}</div>`)}
     </div>
     <div class="sec">
-      <div class="sech"><div class="t"><b>Busiest processes</b><span class="muted">Top ${(st.top_cpu || []).length}</span></div></div>
+      <div class="sech"><div class="t"><b>Busiest processes</b><span class="muted">Top ${(st.top_cpu || []).length}${partial(st) ? " of your processes" : ""}</span></div></div>
       ${procHead()}${live("dv|one|procs", procRows(st))}
     </div>
     <div class="sec last">
