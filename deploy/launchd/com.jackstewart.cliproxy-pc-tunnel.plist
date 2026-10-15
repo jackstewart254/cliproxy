@@ -3,7 +3,7 @@
 <!--
   Keeps an SSH local forward from this Mac's 127.0.0.1:18317 to the PC's
   loopback-only proxy (127.0.0.1:8317 on jacks-desktop), so the dashboard's
-  Devices tab can read the PC. See docs/devices.md to enable it.
+  Devices tab can read the PC. See deploy/launchd/README.md to enable it.
 -->
 <plist version="1.0">
 <dict>
