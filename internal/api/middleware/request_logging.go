@@ -462,6 +462,10 @@ func shouldLogRequest(path string) bool {
 	if strings.HasPrefix(path, "/v0/management") || strings.HasPrefix(path, "/v8/management") || strings.HasPrefix(path, "/management") {
 		return false
 	}
+	// Audio uploads run to hundreds of MB; request-log would hold them in memory.
+	if strings.HasPrefix(path, "/dashboard/transcriptions") {
+		return false
+	}
 
 	return true
 }

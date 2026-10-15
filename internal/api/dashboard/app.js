@@ -8,6 +8,7 @@ import * as telemetry from "./screens/telemetry.js";
 import * as sessions from "./screens/sessions.js";
 import * as session from "./screens/session.js";
 import * as routing from "./screens/routing.js";
+import * as transcripts from "./screens/transcripts.js";
 import * as settings from "./screens/settings.js";
 import { V, allViews, loadViews, redirect, viewHref } from "./screens/views.js";
 import { viewMenu, newViewFromSidebar } from "./screens/viewmenus.js";
@@ -16,6 +17,7 @@ const NAV = [
   { id: "overview", href: "#/", label: "Overview", icon: "overview" },
   { id: "accounts", href: "#/accounts", label: "Accounts", icon: "accounts" },
   { id: "sessions", href: "#/sessions", label: "Sessions", icon: "sessions" },
+  { id: "transcripts", href: "#/transcripts", label: "Transcripts", icon: "microphone" },
   { id: "routing", href: "#/routing", label: "Routing", icon: "routing" },
 ];
 const VIEW_ICON = { allowance: "battery", usage: "usage", performance: "performance" };
@@ -35,6 +37,7 @@ function route() {
   if (!a) return { nav: "overview", screen: overview, params: [] };
   if (a === "accounts" && b === "add") return { nav: "accounts", screen: accounts, params: [], add: true };
   if (a === "accounts" && b) return { nav: "accounts", screen: account, params: [b] };
+  if (a === "transcripts") return { nav: "transcripts", screen: transcripts, params: b ? [b] : [] };
   if (a === "sessions" && b) return { nav: "sessions", screen: session, params: [b] };
   if (a === "telemetry") return { nav: "view:" + (b || ""), screen: telemetry, params: [b || ""] };
   const map = { accounts, sessions, routing, settings };
