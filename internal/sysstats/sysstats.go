@@ -169,10 +169,11 @@ func Read(ctx context.Context) (*Stats, error) {
 	prev := reader.prev
 	if prev == nil || cur.at.Sub(prev.at) > staleAfter {
 		prev = cur
+		refreshSensors(ctx) // inside the wait, so it adds no time
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
-		case <-time.After(primeGap):
+		case <-time.After(primeGap - time.Since(prev.at)):
 		}
 		if cur, err = takeSample(ctx); err != nil {
 			return nil, err
@@ -263,10 +264,7 @@ func build(ctx context.Context, prev, cur *sample) *Stats {
 		reader.disks, reader.disksAt = readDisks(ctx), time.Now()
 	}
 	s.Disks = reader.disks
-	if time.Since(reader.sensorsAt) > sensorEvery {
-		reader.gpus, reader.temps = readSensors(ctx)
-		reader.sensorsAt = time.Now()
-	}
+	refreshSensors(ctx)
 	s.GPUs, s.Temps = reader.gpus, reader.temps
 
 	list := make([]Process, 0, len(cur.procs))
@@ -343,11 +341,21 @@ func readDisks(ctx context.Context) []Disk {
 	return out
 }
 
+// refreshSensors rereads GPUs and temperatures once sensorEvery has passed.
+func refreshSensors(ctx context.Context) {
+	if time.Since(reader.sensorsAt) > sensorEvery {
+		reader.gpus, reader.temps = readSensors(ctx)
+		reader.sensorsAt = time.Now()
+	}
+}
+
 // readSensors reads NVIDIA cards through nvidia-smi and, on macOS, the CPU
-// and GPU temperatures through smctemp, as the /sysmon skill does. Neither
-// needs root.
+// and GPU temperatures through smctemp (Homebrew narugit/tap/smctemp).
+// Neither needs root.
 func readSensors(ctx context.Context) ([]GPU, []Temp) {
-	ctx, cancel := context.WithTimeout(ctx, sensorBudget)
+	// The result is shared for sensorEvery, so a caller that hangs up must
+	// not cut it short; sensorBudget alone bounds it.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sensorBudget)
 	defer cancel()
 	var temps []Temp
 	if runtime.GOOS == "darwin" {
@@ -412,7 +420,7 @@ func run(ctx context.Context, name string, args ...string) []byte {
 		return nil
 	}
 	cmd := exec.CommandContext(ctx, path, args...)
-	cmd.WaitDelay = sensorBudget
+	cmd.WaitDelay = 50 * time.Millisecond
 	out, err := cmd.Output()
 	if err != nil {
 		return nil

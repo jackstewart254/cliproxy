@@ -23,7 +23,7 @@ GPUs and temperatures come from tools the machine already has, read every
 5 seconds within 200 ms; a missing or slow tool leaves its part out:
 - NVIDIA cards (load, memory, temperature, power) from `nvidia-smi`.
 - macOS CPU and GPU temperatures from `smctemp` (Homebrew
-  `narugit/tap/smctemp`, as the /sysmon skill uses; no root needed).
+  `narugit/tap/smctemp`; no root needed).
 - Windows CPU temperature is not shown. Windows exposes no reliable Ryzen
   temperature without a driver such as LibreHardwareMonitor, which is not
   installed.

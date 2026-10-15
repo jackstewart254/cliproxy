@@ -61,8 +61,8 @@ function platform(st) {
   return [name, st.platform_version].filter(Boolean).join(" ");
 }
 
-// Temperatures: amber from 80 °C, red from 90 °C.
-const deg = (c) => `<span class="devtemp ${c >= 90 ? "bad" : c >= 80 ? "warn" : ""}">${Math.round(Number(c) || 0)} °C</span>`;
+// Temperatures: amber from 85 °C, red from 95 °C (Apple chips run near 90 under load).
+const deg = (c) => `<span class="devtemp ${c >= 95 ? "bad" : c >= 85 ? "warn" : ""}">${Math.round(Number(c) || 0)} °C</span>`;
 function hottest(st) {
   const t = (st.temps || []).reduce((a, b) => (!a || b.celsius > a.celsius ? b : a), null);
   return t ? `<span title="${esc(t.label + " is the hottest sensor")}">${deg(t.celsius)}</span>` : "";
@@ -102,15 +102,17 @@ function shell(crumbs, end, body) {
 function listView() {
   const title = `<div class="crumbs"><span class="here">Devices</span></div>`;
   if (!D.list) return shell(title, "", `<div class="empty">${D.error ? "" : "Reading the devices…"}</div>`);
+  // GPU and Temp show only when some device reports them.
+  const gpu = D.list.some((d) => d.stats?.gpus?.length), temp = D.list.some((d) => d.stats?.temps?.length);
   const cols = [
     { label: "", w: 16, min: 16, cls: "ic" },
     { label: "Device" },
     { label: "CPU", w: 128 },
     { label: "Memory", w: 128 },
-    { label: "GPU", w: 128 },
-    { label: "Temp", w: 64, r: true },
+    gpu && { label: "GPU", w: 128 },
+    temp && { label: "Temp", w: 64, r: true },
     { label: "Room for work", w: 128 },
-  ];
+  ].filter(Boolean);
   const rows = D.list.map((d) => {
     const st = d.stats || {};
     const k = "dv|" + d.id + "|";
@@ -124,10 +126,10 @@ function listView() {
         `<span class="devname"><b class="clamp">${esc(d.name || d.id)}</b>${live(k + "sub", `<span class="clamp ${d.online ? "muted" : "warn"}" title="${esc(sub)}">${esc(sub)}</span>`)}</span>`,
         live(k + "cpu", d.online ? meterCell(st.cpu?.percent) : ""),
         live(k + "mem", d.online ? meterCell(st.memory?.percent) : ""),
-        live(k + "gpu", d.online ? gpuLoad(st) : ""),
-        live(k + "temp", d.online ? hottest(st) : ""),
+        gpu && live(k + "gpu", d.online ? gpuLoad(st) : ""),
+        temp && live(k + "temp", d.online ? hottest(st) : ""),
         live(k + "room", d.online ? room(st) : ""),
-      ],
+      ].filter((c) => c !== false),
     };
   });
   return shell(title, readNote(), table(cols, rows, { fit: true, cls: "devtbl" }));
