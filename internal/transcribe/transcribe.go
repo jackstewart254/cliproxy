@@ -63,6 +63,10 @@ type Meta struct {
 	Speakers int        `json:"speakers,omitempty"`
 	Language string     `json:"language,omitempty"`
 	Error    string     `json:"error,omitempty"`
+	// PID and PIDStart name the wrapper while it runs (on Unix PID also
+	// leads its process group), so a restart can kill one a dead proxy left.
+	PID      int    `json:"pid,omitempty"`
+	PIDStart string `json:"pid_start,omitempty"`
 }
 
 // Service holds the job queue and runs it on one worker.
@@ -138,8 +142,16 @@ func (s *Service) recover(dir string) []string {
 		case m.Status == Queued:
 			queued = append(queued, m)
 		case m.Status == Running && jobDir != s.running:
+			// A wrapper still running from before would share the GPU with
+			// the next job and later write over this failed one.
+			if m.PID > 0 {
+				if start, alive := procStart(m.PID); alive && start == m.PIDStart {
+					log.Warnf("transcription %s: killing wrapper pid %d left running by a previous proxy", m.ID, m.PID)
+					killTree(m.PID)
+				}
+			}
 			now := time.Now().UTC()
-			m.Status, m.Finished, m.Error = Failed, &now, "interrupted"
+			m.Status, m.Finished, m.Error, m.PID, m.PIDStart = Failed, &now, "interrupted", 0, ""
 			if err := s.writeMeta(jobDir, m); err != nil {
 				log.Warnf("transcription %s: %v", m.ID, err)
 			}
@@ -198,14 +210,18 @@ func (s *Service) run(jobDir string, cfg config.Transcription) {
 		log.Warnf("transcription: skip %s: %v", jobDir, err)
 		return
 	}
+	// A rescan can queue a job twice; only a queued one runs.
+	if m.Status != Queued {
+		return
+	}
 	now := time.Now().UTC()
 	m.Status, m.Started = Running, &now
 	if err = s.writeMeta(jobDir, m); err != nil {
 		log.Warnf("transcription %s: %v", m.ID, err)
 	}
-	m.Error = s.execute(jobDir, m, cfg)
+	m.Error = s.execute(jobDir, &m, cfg)
 	end := time.Now().UTC()
-	m.Status, m.Finished = Done, &end
+	m.Status, m.Finished, m.PID, m.PIDStart = Done, &end, 0, ""
 	if m.Error != "" {
 		m.Status = Failed
 	}
@@ -215,7 +231,7 @@ func (s *Service) run(jobDir string, cfg config.Transcription) {
 }
 
 // execute runs the wrapper and returns why the job failed, or "".
-func (s *Service) execute(jobDir string, m Meta, cfg config.Transcription) string {
+func (s *Service) execute(jobDir string, m *Meta, cfg config.Transcription) string {
 	if cfg.Command == "" {
 		return "transcription.command is not set in the proxy's config"
 	}
@@ -247,7 +263,15 @@ func (s *Service) execute(jobDir string, m Meta, cfg config.Transcription) strin
 	cmd.Stdout, cmd.Stderr = out, out
 	cmd.WaitDelay = 10 * time.Second
 	killTreeOnCancel(cmd)
-	err = cmd.Run()
+	if err = cmd.Start(); err == nil {
+		afterStart(cmd)
+		m.PID = cmd.Process.Pid
+		m.PIDStart, _ = procStart(m.PID)
+		if errMeta := s.writeMeta(jobDir, *m); errMeta != nil {
+			log.Warnf("transcription %s: %v", m.ID, errMeta)
+		}
+		err = cmd.Wait()
+	}
 	switch {
 	case errors.Is(ctx.Err(), context.DeadlineExceeded):
 		return "timed out after " + timeout.String()
@@ -414,7 +438,12 @@ func (s *Service) Upload(c *gin.Context) {
 		maxMB = defaultMaxUploadMB
 	}
 	limit := int64(maxMB) << 20
-	// The form's headers and small fields ride on top of the file.
+	// The form's headers and small fields ride on top of the file. A chunked
+	// upload has no length, so the reader caps it as it streams.
+	if c.Request.ContentLength > limit+1<<20 {
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": fmt.Sprintf("the file is larger than %d MB", maxMB)})
+		return
+	}
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, limit+1<<20)
 	reader, err := c.Request.MultipartReader()
 	if err != nil {

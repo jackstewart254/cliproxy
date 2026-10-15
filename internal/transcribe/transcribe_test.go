@@ -2,12 +2,14 @@ package transcribe
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -85,9 +87,9 @@ func do(r http.Handler, method, path string) *httptest.ResponseRecorder {
 	return rec
 }
 
-// upload posts a form; fields are name, value pairs, and a "file" pair's
-// value is "filename=content".
-func upload(r http.Handler, fields ...string) *httptest.ResponseRecorder {
+// uploadRequest is a form post; fields are name, value pairs, and a "file"
+// pair's value is "filename=content".
+func uploadRequest(fields ...string) *http.Request {
 	var body bytes.Buffer
 	w := multipart.NewWriter(&body)
 	for i := 0; i+1 < len(fields); i += 2 {
@@ -102,8 +104,12 @@ func upload(r http.Handler, fields ...string) *httptest.ResponseRecorder {
 	_ = w.Close()
 	req := httptest.NewRequest(http.MethodPost, "/t", &body)
 	req.Header.Set("Content-Type", w.FormDataContentType())
+	return req
+}
+
+func upload(r http.Handler, fields ...string) *httptest.ResponseRecorder {
 	rec := httptest.NewRecorder()
-	r.ServeHTTP(rec, req)
+	r.ServeHTTP(rec, uploadRequest(fields...))
 	return rec
 }
 
@@ -192,7 +198,11 @@ func TestFailures(t *testing.T) {
 	}
 }
 
+// After a restart, queued jobs run, and a job left running fails as
+// interrupted, its wrapper killed first if the dead proxy left it running,
+// so the next job never shares the GPU with it.
 func TestRestartRecovery(t *testing.T) {
+	t.Setenv("TRANSCRIBE_FAKE_WRAPPER", "1")
 	dir := t.TempDir()
 	s := New(dir)
 	jobs := map[string]Meta{
@@ -202,19 +212,45 @@ func TestRestartRecovery(t *testing.T) {
 	}
 	for id, m := range jobs {
 		m.ID, m.Created = id, time.Now().UTC()
+		audio := "hello"
+		if m.Status == Running {
+			audio = "sleep"
+		}
 		_ = os.Mkdir(filepath.Join(dir, id), 0o700)
-		_ = os.WriteFile(filepath.Join(dir, id, "audio.m4a"), []byte("hello"), 0o600)
+		_ = os.WriteFile(filepath.Join(dir, id, "audio.m4a"), []byte(audio), 0o600)
 		if err := s.writeMeta(filepath.Join(dir, id), m); err != nil {
 			t.Fatal(err)
 		}
 	}
+	// The wrapper a dead proxy left running, with its pid in meta.json.
+	left := filepath.Join(dir, "20260101-000000-00000001")
+	cmd := exec.CommandContext(context.Background(), os.Args[0], "-InputPath", filepath.Join(left, "audio.m4a"), "-OutDir", left)
+	killTreeOnCancel(cmd)
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	afterStart(cmd)
+	go func() { _ = cmd.Wait() }() // reaps it, as init would for an orphan
+	m, _ := s.readMeta(left)
+	m.PID = cmd.Process.Pid
+	m.PIDStart, _ = procStart(m.PID)
+	if err := s.writeMeta(left, m); err != nil || m.PIDStart == "" {
+		t.Fatalf("left-over wrapper: %v %+v", err, m)
+	}
+
 	_, r := newService(t, config.Transcription{Dir: dir})
-	if job := waitFor(t, r, "20260101-000000-00000001", Failed); job.Error != "interrupted" {
+	if _, alive := procStart(m.PID); alive {
+		t.Fatal("the left-over wrapper is still running once the restarted service can start jobs")
+	}
+	if job := waitFor(t, r, "20260101-000000-00000001", Failed); job.Error != "interrupted" || job.PID != 0 {
 		t.Fatalf("running job after restart: %+v", job)
 	}
 	waitFor(t, r, "20260101-000000-00000002", Done)
 	if job := waitFor(t, r, "20260101-000000-00000003", Done); job.Started != nil {
 		t.Fatalf("a done job ran again: %+v", job)
+	}
+	if _, err := os.Stat(filepath.Join(left, "transcript.json")); err == nil {
+		t.Fatal("the interrupted job's wrapper wrote a transcript")
 	}
 }
 
@@ -244,6 +280,13 @@ func TestUploadRejects(t *testing.T) {
 		if rec := upload(r, tc.fields...); rec.Code != tc.want {
 			t.Errorf("%s: %d %s, want %d", tc.name, rec.Code, rec.Body, tc.want)
 		}
+	}
+	// A chunked upload has no length up front; the cap applies as it streams.
+	chunked := uploadRequest("file", "a.m4a="+strings.Repeat("x", 1<<20+1))
+	chunked.ContentLength = -1
+	big := httptest.NewRecorder()
+	if r.ServeHTTP(big, chunked); big.Code != http.StatusRequestEntityTooLarge {
+		t.Errorf("chunked too big: %d %s", big.Code, big.Body)
 	}
 	var list struct{ Jobs []Meta }
 	if rec := do(r, http.MethodGet, "/t"); json.Unmarshal(rec.Body.Bytes(), &list) != nil || len(list.Jobs) != 0 {
