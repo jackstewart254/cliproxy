@@ -270,6 +270,11 @@ func (h *Handler) Middleware() gin.HandlerFunc {
 		c.Header("X-CPA-BUILD-DATE", buildinfo.BuildDate)
 		c.Header("X-CPA-SUPPORT-PLUGIN", pluginhost.SupportPluginHeaderValue())
 
+		// ClientIP is the TCP peer unless trusted-proxies lists it. Tailscale
+		// Serve connects from loopback, so with trusted-proxies empty its
+		// requests count as local: the key is still required, allow-remote is
+		// not, and failed keys count against the loopback ban bucket. Its
+		// X-Forwarded-For is never read here.
 		clientIP := c.ClientIP()
 		localClient := clientIP == "127.0.0.1" || clientIP == "::1"
 

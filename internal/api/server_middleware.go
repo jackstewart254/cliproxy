@@ -3,6 +3,7 @@ package api
 import (
 	"net"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -130,10 +131,14 @@ func isExampleAPIKeySafeModeProxyPath(path string) bool {
 //
 // Returns:
 //   - gin.HandlerFunc: The CORS middleware handler
-func corsMiddleware() gin.HandlerFunc {
+func (s *Server) corsMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if path := c.Request.URL.Path; path == "/dashboard" || strings.HasPrefix(path, "/dashboard/") {
-			if !dashboardRequestAllowed(c.Request) {
+			var allowedHosts []string
+			if cfg := s.getConfig(); cfg != nil {
+				allowedHosts = cfg.RemoteManagement.DashboardAllowedHosts
+			}
+			if !dashboardRequestAllowed(c.Request, allowedHosts) {
 				c.AbortWithStatus(http.StatusForbidden)
 				return
 			}
@@ -156,9 +161,10 @@ func corsMiddleware() gin.HandlerFunc {
 }
 
 // dashboardRequestAllowed keeps the key-less dashboard routes away from other
-// websites and DNS rebinding: the Host must be loopback, and any Origin must be
-// that same host. No CORS headers are sent for /dashboard.
-func dashboardRequestAllowed(r *http.Request) bool {
+// websites and DNS rebinding: the Host must be loopback, or a name in
+// allowedHosts on a request that came through Tailscale Serve, and any Origin
+// must be that same host. No CORS headers are sent for /dashboard.
+func dashboardRequestAllowed(r *http.Request, allowedHosts []string) bool {
 	host, _, err := net.SplitHostPort(r.Host)
 	if err != nil {
 		host = r.Host
@@ -166,10 +172,27 @@ func dashboardRequestAllowed(r *http.Request) bool {
 	switch strings.Trim(host, "[]") {
 	case "127.0.0.1", "localhost", "::1":
 	default:
-		return false
+		if !viaTailscaleServe(r, host, allowedHosts) {
+			return false
+		}
 	}
 	origin := r.Header.Get("Origin")
 	return origin == "" || origin == "http://"+r.Host || origin == "https://"+r.Host
+}
+
+// viaTailscaleServe reports whether r reached this server through Tailscale
+// Serve under a host listed in allowedHosts. Serve keeps the client's Host,
+// connects from loopback, and sets Tailscale-User-Login for a tailnet user
+// after deleting any copy the client sent, so only a local process could
+// forge it. X-Forwarded-For is deliberately not read.
+func viaTailscaleServe(r *http.Request, host string, allowedHosts []string) bool {
+	if r.Header.Get("Tailscale-User-Login") == "" || !fromLoopback(r.RemoteAddr) {
+		return false
+	}
+	return slices.ContainsFunc(allowedHosts, func(allowed string) bool {
+		allowed = strings.TrimSpace(allowed)
+		return allowed != "" && strings.EqualFold(allowed, host)
+	})
 }
 
 // AuthMiddleware returns a Gin middleware handler that authenticates requests
