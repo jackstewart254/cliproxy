@@ -138,3 +138,111 @@ func TestSetHealthBlockFailsOverInFlightAttempts(t *testing.T) {
 		t.Fatalf("client cancel: body=%q err=%v, want context.Canceled and no fallback", body, err)
 	}
 }
+
+// midStreamHubExecutor answers the hub stream with one chunk, then stalls until
+// its attempt ends and, like the Claude executor, races its error against the
+// attempt context, so the error may or may not reach the conductor.
+type midStreamHubExecutor struct {
+	hangingHubExecutor
+	streamCtx chan context.Context
+}
+
+func (e *midStreamHubExecutor) ExecuteStream(ctx context.Context, auth *Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (*cliproxyexecutor.StreamResult, error) {
+	if auth.ID != e.hubID {
+		return e.hangingHubExecutor.ExecuteStream(ctx, auth, req, opts)
+	}
+	e.streamCtx <- ctx
+	out := make(chan cliproxyexecutor.StreamChunk, 1)
+	out <- cliproxyexecutor.StreamChunk{Payload: []byte("part1")}
+	go func() {
+		defer close(out)
+		<-ctx.Done()
+		select {
+		case out <- cliproxyexecutor.StreamChunk{Err: ctx.Err()}:
+		case <-ctx.Done():
+		}
+	}()
+	return &cliproxyexecutor.StreamResult{Chunks: out}, nil
+}
+
+// After the first byte, a health block ends the stream with exactly one
+// ErrHealthBlocked chunk and records the attempt as a failure, never a success.
+// A stream that just received a chunk is spared, and a client that left gets
+// no health error.
+func TestSetHealthBlockEndsCutStreamWithError(t *testing.T) {
+	hook := &resultCaptureHook{}
+	m := NewManager(nil, nil, hook)
+	hub := &Auth{ID: "health-midstream-hub", Provider: "claude", Status: StatusActive,
+		Attributes: map[string]string{"priority": "100", "health_check": "true"}}
+	fallback := &Auth{ID: "health-midstream-fallback", Provider: "claude", Status: StatusActive}
+	reg := registry.GetGlobalRegistry()
+	for _, a := range []*Auth{hub, fallback} {
+		reg.RegisterClient(a.ID, "claude", []*registry.ModelInfo{{ID: "claude-3"}})
+		t.Cleanup(func() { reg.UnregisterClient(a.ID) })
+		if _, err := m.Register(context.Background(), a); err != nil {
+			t.Fatalf("register %s: %v", a.ID, err)
+		}
+	}
+	exec := &midStreamHubExecutor{hangingHubExecutor: hangingHubExecutor{hubID: hub.ID}, streamCtx: make(chan context.Context, 1)}
+	m.RegisterExecutor(exec)
+	start := func(ctx context.Context) (<-chan cliproxyexecutor.StreamChunk, context.Context) {
+		result, err := m.ExecuteStream(ctx, []string{"claude"}, cliproxyexecutor.Request{Model: "claude-3"}, cliproxyexecutor.Options{})
+		if err != nil {
+			t.Fatalf("stream: %v", err)
+		}
+		if chunk := <-result.Chunks; string(chunk.Payload) != "part1" || chunk.Err != nil {
+			t.Fatalf("first chunk = %q, %v; want part1 from the hub", chunk.Payload, chunk.Err)
+		}
+		return result.Chunks, <-exec.streamCtx
+	}
+	block := func() { m.SetHealthBlock(hub.ID, time.Now().Add(time.Minute)) }
+	previous := healthStreamGrace
+	t.Cleanup(func() { healthStreamGrace = previous })
+
+	// A client that leaves gets no health error, and its credential is not
+	// cooled: the next stream still starts on the hub.
+	ctx, cancel := context.WithCancel(context.Background())
+	chunks, _ := start(ctx)
+	cancel()
+	healthStreamGrace = 0
+	block()
+	for chunk := range chunks {
+		if errors.Is(chunk.Err, ErrHealthBlocked) {
+			t.Fatal("client that left got a health error")
+		}
+	}
+	m.SetHealthBlock(hub.ID, time.Time{})
+	healthStreamGrace = previous
+
+	before := len(hook.Results())
+	chunks, attemptCtx := start(context.Background())
+	block()
+	if attemptCtx.Err() != nil {
+		t.Fatal("a stream that just received a chunk was cut by the block")
+	}
+	healthStreamGrace = 0 // the stream has now been idle past the grace
+	block()
+	var errs []error
+	for chunk := range chunks {
+		if chunk.Err == nil {
+			t.Fatalf("payload %q after the cut", chunk.Payload)
+		}
+		errs = append(errs, chunk.Err)
+	}
+	if len(errs) != 1 || !errors.Is(errs[0], ErrHealthBlocked) {
+		t.Fatalf("stream ended with errors %v, want exactly one ErrHealthBlocked", errs)
+	}
+	failed := false
+	for _, r := range hook.Results()[before:] {
+		if r.AuthID != hub.ID {
+			continue
+		}
+		if r.Success {
+			t.Fatal("cut stream recorded as a success")
+		}
+		failed = failed || (r.Error != nil && r.Error.Message == ErrHealthBlocked.Error())
+	}
+	if !failed {
+		t.Fatalf("cut stream not recorded as a failure: %+v", hook.Results())
+	}
+}

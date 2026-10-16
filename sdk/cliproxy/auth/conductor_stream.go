@@ -131,7 +131,19 @@ func (m *Manager) wrapStreamResult(ctx context.Context, auth *Auth, provider, re
 		if aliasResult.ForceMapping && strings.TrimSpace(aliasResult.OriginalAlias) != "" {
 			rewriter = NewStreamRewriter(StreamRewriteOptions{RewriteModel: aliasResult.OriginalAlias})
 		}
-		emit := func(chunk cliproxyexecutor.StreamChunk) bool {
+		attempt := healthAttemptFrom(ctx)
+		var emit func(cliproxyexecutor.StreamChunk) bool
+		emit = func(chunk cliproxyexecutor.StreamChunk) bool {
+			// The health check cut this stream after its first byte. Whatever the
+			// upstream sends now (an error, a payload or nothing), the client gets
+			// one clean error, the stream ends and the attempt counts as a
+			// failure. A client that left gets nothing, as before.
+			cut := attempt.cut(ctx)
+			if cut {
+				chunk = cliproxyexecutor.StreamChunk{Err: ErrHealthBlocked}
+			} else if chunk.Err == nil {
+				attempt.touch()
+			}
 			if chunk.Err != nil && !failed {
 				failed = true
 				entry := logEntryWithRequestID(ctx)
@@ -152,12 +164,16 @@ func (m *Manager) wrapStreamResult(ctx context.Context, auth *Auth, provider, re
 					out <- chunk
 					return true
 				}
+				done := ctx.Done()
+				if cut {
+					done = attempt.client.Done()
+				}
 				select {
-				case <-ctx.Done():
+				case <-done:
 					forward = false
 					return false
 				case out <- chunk:
-					return true
+					return !cut
 				}
 			}
 			if len(chunk.Payload) == 0 {
@@ -174,6 +190,9 @@ func (m *Manager) wrapStreamResult(ctx context.Context, auth *Auth, provider, re
 			}
 			select {
 			case <-ctx.Done():
+				if attempt.cut(ctx) {
+					return emit(chunk)
+				}
 				forward = false
 				return false
 			case out <- chunk:
@@ -191,6 +210,11 @@ func (m *Manager) wrapStreamResult(ctx context.Context, auth *Auth, provider, re
 				discardStreamChunks(remaining)
 				return
 			}
+		}
+		if !failed && attempt.cut(ctx) {
+			// The upstream closed without passing the cut on as an error.
+			emit(cliproxyexecutor.StreamChunk{})
+			return
 		}
 		if tail := finishForceMappedStreamChunks(rewriter); len(tail) > 0 {
 			tailChunk := cliproxyexecutor.StreamChunk{Payload: tail}

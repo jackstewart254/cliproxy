@@ -623,6 +623,10 @@ func (m *Manager) executeMixedOnce(ctx context.Context, providers []string, req 
 							upstreamErr = errExec
 						}
 						warnLogUpstreamFailure(execCtx, entry, provider, upstreamModel, auth, durationRetry, errExec)
+						if healthAborted(execCtx) && ctx.Err() == nil {
+							authErr = ErrHealthBlocked
+							break
+						}
 						if errCtx := execCtx.Err(); errCtx != nil {
 							return cliproxyexecutor.Response{}, errCtx
 						}
@@ -841,6 +845,10 @@ func (m *Manager) executeCountMixedOnce(ctx context.Context, providers []string,
 							upstreamErr = errExec
 						}
 						warnLogUpstreamFailure(execCtx, entry, provider, upstreamModel, auth, durationRetry, errExec)
+						if healthAborted(execCtx) && ctx.Err() == nil {
+							authErr = ErrHealthBlocked
+							break
+						}
 						if errCtx := execCtx.Err(); errCtx != nil {
 							return cliproxyexecutor.Response{}, errCtx
 						}
@@ -1059,7 +1067,7 @@ func (m *Manager) executeStreamMixedOnce(ctx context.Context, providers []string
 		releaseAttempt := func() {}
 		if selection != nil {
 			var errBind error
-			execCtx, releaseAttempt, errBind = homeExecutionAttemptContext(ctx, selection)
+			execCtx, releaseAttempt, errBind = homeExecutionAttemptContext(execCtx, selection)
 			if errBind != nil {
 				selection.End("attempt_bind_failed")
 				return nil, errBind
