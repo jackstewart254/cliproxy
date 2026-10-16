@@ -63,7 +63,8 @@ type Handler struct {
 	pluginReleases          pluginReleaseCache
 	// refusedDeviceKeys holds url+key pairs a device answered 401 to. Asking
 	// again would get this host banned there after five tries, which through
-	// a tunnel is the device's own loopback address. Cleared on config reload.
+	// Tailscale Serve is the device's own loopback address. Cleared on config
+	// reload.
 	refusedDeviceKeys sync.Map
 }
 
