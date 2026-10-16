@@ -44,9 +44,12 @@ type Stats struct {
 	Threads         int           `json:"threads"`
 	// Unreadable counts processes this user may not inspect (on macOS,
 	// other users' processes); they are missing from threads and the tops.
-	Unreadable    int       `json:"unreadable"`
-	TopCPU        []Process `json:"top_cpu"`
-	TopMemory     []Process `json:"top_memory"`
+	Unreadable int       `json:"unreadable"`
+	TopCPU     []Process `json:"top_cpu"`
+	TopMemory  []Process `json:"top_memory"`
+	// Groups is every readable process sorted into what it belongs to,
+	// largest by memory first.
+	Groups        []Group   `json:"groups,omitempty"`
 	Headroom      Headroom  `json:"headroom"`
 	SampledAt     time.Time `json:"sampled_at"`
 	SampleSeconds float64   `json:"sample_seconds"` // the span CPU percentages cover
@@ -139,6 +142,10 @@ type procSample struct {
 	cpu     float64 // seconds used since the process started
 	rss     uint64
 	threads int32
+	// Read once per process and carried from sample to sample.
+	ppid    int32
+	exe     string
+	cmdline string // only for scripted programs (node, python, shells)
 }
 
 var reader struct {
@@ -149,20 +156,22 @@ var reader struct {
 	disks     []Disk
 	disksAt   time.Time
 	gpus      []GPU
+	gpuPIDs   map[int32]uint64 // processes computing on a card, with their memory there when known
 	temps     []Temp
 	sensorsAt time.Time
 }
 
-// Read returns a reading of this host. It never runs a goroutine of its own:
-// CPU percentages cover the time since the previous call, or primeGap when
-// that is long ago.
-func Read(ctx context.Context) (*Stats, error) {
+// Read returns a reading of this host, its processes grouped by rules (from
+// the config) before the built in ones. It never runs a goroutine of its
+// own: CPU percentages cover the time since the previous call, or primeGap
+// when that is long ago.
+func Read(ctx context.Context, rules []Rule) (*Stats, error) {
 	reader.Lock()
 	defer reader.Unlock()
 	if reader.last != nil && time.Since(reader.last.SampledAt) < minGap {
 		return reader.last, nil
 	}
-	cur, err := takeSample(ctx)
+	cur, err := takeSample(ctx, reader.prev)
 	if err != nil {
 		return nil, err
 	}
@@ -175,16 +184,20 @@ func Read(ctx context.Context) (*Stats, error) {
 			return nil, ctx.Err()
 		case <-time.After(primeGap - time.Since(prev.at)):
 		}
-		if cur, err = takeSample(ctx); err != nil {
+		if cur, err = takeSample(ctx, prev); err != nil {
 			return nil, err
 		}
 	}
 	reader.prev = cur
-	reader.last = build(ctx, prev, cur)
+	reader.last = build(ctx, prev, cur, normalize(rules))
 	return reader.last, nil
 }
 
-func takeSample(ctx context.Context) (*sample, error) {
+// takeSample reads every process. A process known from the last sample
+// (same pid and name) keeps its parent, path and command line from it, so
+// those are read once per process: on Windows a command line means opening
+// the process and reading its memory, so it is read only for scripted ones.
+func takeSample(ctx context.Context, last *sample) (*sample, error) {
 	cores, err := cpu.TimesWithContext(ctx, true)
 	if err != nil {
 		return nil, fmt.Errorf("read cpu times: %w", err)
@@ -207,9 +220,26 @@ func takeSample(ctx context.Context) (*sample, error) {
 		} else {
 			ps.threads, _ = p.NumThreadsWithContext(ctx)
 		}
+		if was, ok := last.known(p.Pid, ps.name); ok {
+			ps.ppid, ps.exe, ps.cmdline = was.ppid, was.exe, was.cmdline
+		} else {
+			ps.ppid, _ = p.PpidWithContext(ctx)
+			ps.exe, _ = p.ExeWithContext(ctx)
+			if scripted(baseName(ps.name)) {
+				ps.cmdline, _ = p.CmdlineWithContext(ctx)
+			}
+		}
 		out.procs[p.Pid] = ps
 	}
 	return out, nil
+}
+
+func (s *sample) known(pid int32, name string) (procSample, bool) {
+	if s == nil {
+		return procSample{}, false
+	}
+	p, ok := s.procs[pid]
+	return p, ok && p.name == name
 }
 
 // busy splits the time between two CPU samples into busy and total seconds.
@@ -231,7 +261,7 @@ func percent(part, whole float64) float64 {
 	return part / whole * 100
 }
 
-func build(ctx context.Context, prev, cur *sample) *Stats {
+func build(ctx context.Context, prev, cur *sample, rules []Rule) *Stats {
 	if reader.static == nil {
 		reader.static = hostInfo(ctx)
 	}
@@ -286,6 +316,7 @@ func build(ctx context.Context, prev, cur *sample) *Stats {
 	s.Processes = len(cur.procs)
 	s.TopCPU = top(list, func(a, b Process) bool { return a.CPUPercent > b.CPUPercent })
 	s.TopMemory = top(list, func(a, b Process) bool { return a.RSS > b.RSS })
+	s.Groups = groupProcs(cur.procs, list, rules, reader.gpuPIDs, s.CPU.Cores, runtime.GOOS, int32(os.Getpid()))
 
 	idle := 100 - s.CPU.Percent
 	s.Headroom = Headroom{
@@ -344,15 +375,15 @@ func readDisks(ctx context.Context) []Disk {
 // refreshSensors rereads GPUs and temperatures once sensorEvery has passed.
 func refreshSensors(ctx context.Context) {
 	if time.Since(reader.sensorsAt) > sensorEvery {
-		reader.gpus, reader.temps = readSensors(ctx)
+		reader.gpus, reader.gpuPIDs, reader.temps = readSensors(ctx)
 		reader.sensorsAt = time.Now()
 	}
 }
 
-// readSensors reads NVIDIA cards through nvidia-smi and, on macOS, the CPU
-// and GPU temperatures through smctemp (Homebrew narugit/tap/smctemp).
-// Neither needs root.
-func readSensors(ctx context.Context) ([]GPU, []Temp) {
+// readSensors reads NVIDIA cards and the processes computing on them
+// through nvidia-smi and, on macOS, the CPU and GPU temperatures through
+// smctemp (Homebrew narugit/tap/smctemp). Neither needs root.
+func readSensors(ctx context.Context) ([]GPU, map[int32]uint64, []Temp) {
 	// The result is shared for sensorEvery, so a caller that hangs up must
 	// not cut it short; sensorBudget alone bounds it.
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sensorBudget)
@@ -372,7 +403,27 @@ func readSensors(ctx context.Context) ([]GPU, []Temp) {
 			temps = append(temps, Temp{Label: g.Name, Celsius: g.Celsius})
 		}
 	}
-	return gpus, temps
+	var pids map[int32]uint64
+	if len(gpus) > 0 {
+		pids = parseComputeApps(run(ctx, "nvidia-smi", "--query-compute-apps=pid,used_memory", "--format=csv,noheader,nounits"))
+	}
+	return gpus, pids, temps
+}
+
+// parseComputeApps reads nvidia-smi's compute-apps lines: pid, memory used
+// in MiB. Windows reports the memory as "[N/A]", which leaves it zero.
+func parseComputeApps(out []byte) map[int32]uint64 {
+	pids := make(map[int32]uint64)
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		f := strings.Split(line, ",")
+		if len(f) != 2 {
+			continue
+		}
+		if pid, err := strconv.ParseInt(strings.TrimSpace(f[0]), 10, 32); err == nil && pid > 0 {
+			pids[int32(pid)] += uint64(number(f[1]) * (1 << 20))
+		}
+	}
+	return pids
 }
 
 // parseNvidiaSMI reads nvidia-smi's csv,noheader,nounits lines: name,

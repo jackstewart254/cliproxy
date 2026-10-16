@@ -20,12 +20,24 @@ import (
 
 // GetSystem reports the load on the host this proxy runs on.
 func (h *Handler) GetSystem(c *gin.Context) {
-	stats, err := sysstats.Read(c.Request.Context())
+	stats, err := sysstats.Read(c.Request.Context(), h.processRules())
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, stats)
+}
+
+// processRules are the config's process groups for sysstats.
+func (h *Handler) processRules() []sysstats.Rule {
+	if h.cfg == nil {
+		return nil
+	}
+	var out []sysstats.Rule
+	for _, g := range h.cfg.RemoteManagement.ProcessGroups {
+		out = append(out, sysstats.Rule{Name: g.Name, Kind: g.Kind, About: g.Description, Match: g.Match})
+	}
+	return out
 }
 
 // deviceTimeout bounds one device's stats request, so a machine that is
@@ -65,7 +77,7 @@ func (h *Handler) GetDashboardDevices(c *gin.Context) {
 		wg.Go(func() { out[i+1] = h.fetchDevice(ctx, strconv.Itoa(i+1), d) })
 	}
 	out[0] = deviceReply{ID: "local", Local: true}
-	if stats, err := sysstats.Read(ctx); err != nil {
+	if stats, err := sysstats.Read(ctx, h.processRules()); err != nil {
 		out[0].Error = err.Error()
 	} else {
 		out[0].Name, out[0].Online, out[0].Stats = stats.Hostname, true, stats
