@@ -70,6 +70,20 @@ management:
   # Disable the bundled management control panel asset download and HTTP route when true.
   disable-control-panel: false
 
+  # Hostnames, besides loopback, under which the key-less /dashboard answers, for
+  # a loopback-bound proxy published with `tailscale serve --http=80 http://127.0.0.1:8317`.
+  # A listed name counts only when the TCP peer is loopback and the request has a
+  # Tailscale-User-Login header (Serve sets it, after deleting any client copy).
+  # X-Forwarded-For is never trusted. Empty (the default) means loopback only.
+  # Reloads without a restart. Management API calls through Serve need no entry:
+  # they arrive from 127.0.0.1, so they count as local (key still required,
+  # allow-remote not needed) as long as trusted-proxies does not list loopback.
+  # Failed management keys through Serve also count against 127.0.0.1, so 5 bad
+  # keys from the tailnet ban local management clients on this machine for 30 min.
+  # dashboard-allowed-hosts:
+  #   - my-pc.example-tailnet.ts.net
+  #   - my-pc
+
   # Disable automatic periodic background updates of the management panel from GitHub (default: false).
   # When enabled, the panel is only downloaded on first access if missing, and never auto-updated afterward.
   # disable-auto-update-panel: false

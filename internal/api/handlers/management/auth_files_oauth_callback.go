@@ -50,7 +50,10 @@ func startCallbackForwarder(port int, provider, targetBase string) (*callbackFor
 		stopForwarderInstance(port, prev)
 	}
 
-	addr := fmt.Sprintf("0.0.0.0:%d", port)
+	// Loopback only: the browser that lands here runs on this host. A remote
+	// browser (e.g. over Tailscale) cannot reach it anyway and uses the paste
+	// fallback, so nothing outside this host should be able to connect.
+	addr := fmt.Sprintf("127.0.0.1:%d", port)
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to listen on %s: %w", addr, err)

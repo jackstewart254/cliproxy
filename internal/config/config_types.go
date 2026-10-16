@@ -331,6 +331,10 @@ type RemoteManagement struct {
 	PanelGitHubRepository string `yaml:"panel-github-repository"`
 	// BaseURL specifies the base URL of the remote management API for TUI client mode (e.g. "https://proxy.example.com").
 	BaseURL string `yaml:"base-url,omitempty" json:"base-url,omitempty"`
+	// DashboardAllowedHosts lists hostnames, besides loopback, under which the
+	// key-less dashboard answers, but only on requests Tailscale Serve proxies
+	// to this loopback listener. Empty means loopback only.
+	DashboardAllowedHosts []string `yaml:"dashboard-allowed-hosts,omitempty"`
 	// Devices lists other machines running this proxy whose host load the
 	// dashboard's Devices tab shows. This server fetches their stats, so a
 	// device's management key never reaches the browser.

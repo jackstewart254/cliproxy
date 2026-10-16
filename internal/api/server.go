@@ -180,7 +180,6 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 		}
 	}
 
-	engine.Use(corsMiddleware())
 	wd, err := os.Getwd()
 	if err != nil {
 		wd = configFilePath
@@ -241,6 +240,9 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 	s.localPassword = optionState.localPassword
 	s.transcriber = transcribe.New(filepath.Join(filepath.Dir(configFilePath), "transcriptions"))
 	s.transcriber.Configure(cfg.Transcription)
+
+	// CORS and the dashboard host guard; it reads s.cfg, so it is added once s exists.
+	engine.Use(s.corsMiddleware())
 
 	// Home heartbeat gate: when home is enabled, block all endpoints with 503 until the
 	// subscribe-config heartbeat connection is healthy.
