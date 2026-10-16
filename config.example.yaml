@@ -83,10 +83,10 @@ management:
 
   # Other machines running this proxy, shown on the dashboard's Devices tab with their CPU,
   # memory and busiest processes. This server fetches /v8/management/server/system from each
-  # with its management key, so the key never reaches the browser. See deploy/launchd/README.md.
+  # with its management key, so the key never reaches the browser. See docs/management-api-v8.md (Devices).
   # devices:
   #   - name: "jacks-desktop"
-  #     url: "http://127.0.0.1:18317" # an SSH local forward to the other machine's loopback proxy
+  #     url: "http://jacks-desktop.taila5e4cd.ts.net" # the other machine's Tailscale Serve URL
   #     management-key: "the other machine's management secret-key, in plain text"
 
 # Client authentication for the proxy API. These are not upstream provider keys.
