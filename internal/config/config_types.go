@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"strconv"
@@ -12,9 +13,16 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// StatusNoHTTP is the in-memory Status of a rule written with an explicit
+// `status: 0`. It matches failures that carry no HTTP status (connection
+// refused, dial timeout, DNS, reset). A rule that omits status keeps Status 0
+// and matches nothing, as it always did.
+const StatusNoHTTP = -1
+
 // RequestScopedErrorRule configures custom classification and handling for upstream errors.
 type RequestScopedErrorRule struct {
-	// Status matches the HTTP status code of the upstream response (e.g. 400).
+	// Status matches the HTTP status code of the upstream response (e.g. 400),
+	// or StatusNoHTTP for an explicit `status: 0`.
 	Status int `yaml:"status,omitempty" json:"status,omitempty"`
 	// Match matches substrings in the upstream error body.
 	Match []string `yaml:"match,omitempty" json:"match,omitempty"`
@@ -22,6 +30,61 @@ type RequestScopedErrorRule struct {
 	MatchRegexr []string `yaml:"match-regexr,omitempty" json:"match-regexr,omitempty"`
 	// Action specifies the handling behavior: "stop", "stop-and-cooldown", "continue", "continue-and-cooldown".
 	Action string `yaml:"action,omitempty" json:"action,omitempty"`
+}
+
+// requestScopedErrorRuleWire is the YAML/JSON form of a rule. The pointer tells
+// an explicit `status: 0` (StatusNoHTTP in memory) from an omitted status.
+type requestScopedErrorRuleWire struct {
+	Status      *int     `yaml:"status,omitempty" json:"status,omitempty"`
+	Match       []string `yaml:"match,omitempty" json:"match,omitempty"`
+	MatchRegexr []string `yaml:"match-regexr,omitempty" json:"match-regexr,omitempty"`
+	Action      string   `yaml:"action,omitempty" json:"action,omitempty"`
+}
+
+func (r RequestScopedErrorRule) wire() requestScopedErrorRuleWire {
+	w := requestScopedErrorRuleWire{Match: r.Match, MatchRegexr: r.MatchRegexr, Action: r.Action}
+	if r.Status == StatusNoHTTP || r.Status > 0 {
+		status := max(r.Status, 0)
+		w.Status = &status
+	}
+	return w
+}
+
+func (r *RequestScopedErrorRule) fromWire(w requestScopedErrorRuleWire) {
+	*r = RequestScopedErrorRule{Match: w.Match, MatchRegexr: w.MatchRegexr, Action: w.Action}
+	switch {
+	case w.Status == nil || *w.Status < 0:
+	case *w.Status == 0:
+		r.Status = StatusNoHTTP
+	default:
+		r.Status = *w.Status
+	}
+}
+
+// MarshalYAML writes StatusNoHTTP back as `status: 0`.
+func (r RequestScopedErrorRule) MarshalYAML() (any, error) { return r.wire(), nil }
+
+// UnmarshalYAML reads an explicit `status: 0` as StatusNoHTTP.
+func (r *RequestScopedErrorRule) UnmarshalYAML(node *yaml.Node) error {
+	var w requestScopedErrorRuleWire
+	if err := node.Decode(&w); err != nil {
+		return err
+	}
+	r.fromWire(w)
+	return nil
+}
+
+// MarshalJSON writes StatusNoHTTP back as "status": 0.
+func (r RequestScopedErrorRule) MarshalJSON() ([]byte, error) { return json.Marshal(r.wire()) }
+
+// UnmarshalJSON reads an explicit "status": 0 as StatusNoHTTP.
+func (r *RequestScopedErrorRule) UnmarshalJSON(data []byte) error {
+	var w requestScopedErrorRuleWire
+	if err := json.Unmarshal(data, &w); err != nil {
+		return err
+	}
+	r.fromWire(w)
+	return nil
 }
 
 // PluginsConfig holds dynamic plugin system settings.
@@ -564,6 +627,10 @@ type ClaudeKey struct {
 	// BaseURL is the base URL for the Claude API endpoint.
 	// If empty, the default Claude API URL will be used.
 	BaseURL string `yaml:"base-url" json:"base-url"`
+
+	// HealthCheck polls GET {base-url}/healthz and takes the credential out of
+	// rotation while that endpoint stops answering. Needs a base-url.
+	HealthCheck bool `yaml:"health-check,omitempty" json:"health-check,omitempty"`
 
 	// ProxyURL overrides the global proxy setting for this API key if provided.
 	ProxyURL string `yaml:"proxy-url" json:"proxy-url"`

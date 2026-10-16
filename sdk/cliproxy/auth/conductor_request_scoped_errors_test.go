@@ -402,26 +402,24 @@ func TestRequestScopedErrors_ActionContinueAndCooldown(t *testing.T) {
 	}
 }
 
-// A status 0 rule cools a credential whose endpoint refuses connections, so the
-// next request goes straight to the fallback instead of dialing it again.
-func TestRequestScopedErrors_StatusZeroCoolsUnreachableEndpoint(t *testing.T) {
+// newHubWithFallback registers a priority-100 "hub" credential carrying rule and
+// a fallback credential. The hub fails every request with hubErr; the fallback
+// succeeds. It returns the manager and a counter of hub attempts.
+func newHubWithFallback(t *testing.T, name string, rule internalconfig.RequestScopedErrorRule, hubErr func(ctx context.Context) error) (*Manager, *int) {
+	t.Helper()
 	previous := quotaCooldownDisabled.Load()
 	quotaCooldownDisabled.Store(false)
 	t.Cleanup(func() { quotaCooldownDisabled.Store(previous) })
 
 	m := NewManager(nil, nil, nil)
 	hub := &Auth{
-		ID:         "auth-claude-hub-unreachable",
+		ID:         "auth-claude-hub-" + name,
 		Provider:   "claude",
 		Status:     StatusActive,
 		Attributes: map[string]string{"priority": "100"},
-		Metadata: map[string]any{
-			"request_scoped_errors": []internalconfig.RequestScopedErrorRule{
-				{Status: 0, Match: []string{"connection refused"}, Action: "continue-and-cooldown"},
-			},
-		},
+		Metadata:   map[string]any{"request_scoped_errors": []internalconfig.RequestScopedErrorRule{rule}},
 	}
-	fallback := &Auth{ID: "auth-claude-hub-fallback", Provider: "claude", Status: StatusActive}
+	fallback := &Auth{ID: "auth-claude-fallback-" + name, Provider: "claude", Status: StatusActive}
 	reg := registry.GetGlobalRegistry()
 	for _, a := range []*Auth{hub, fallback} {
 		reg.RegisterClient(a.ID, "claude", []*registry.ModelInfo{{ID: "claude-3"}})
@@ -430,29 +428,80 @@ func TestRequestScopedErrors_StatusZeroCoolsUnreachableEndpoint(t *testing.T) {
 			t.Fatalf("register %s: %v", a.ID, err)
 		}
 	}
-
 	hubCalls := 0
 	m.RegisterExecutor(&mockCustomErrorExecutor{
 		identifier: "claude",
 		executeFn: func(ctx context.Context, auth *Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
 			if auth.ID == hub.ID {
 				hubCalls++
-				return cliproxyexecutor.Response{}, &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connect: connection refused")}
+				return cliproxyexecutor.Response{}, hubErr(ctx)
 			}
 			return cliproxyexecutor.Response{Payload: []byte(`{"result":"fallback"}`)}, nil
 		},
 	})
+	return m, &hubCalls
+}
 
+var errRefused = &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connect: connection refused")}
+
+// An explicit `status: 0` rule cools a credential whose endpoint refuses
+// connections, so the next request goes straight to the fallback.
+func TestRequestScopedErrors_StatusZeroCoolsUnreachableEndpoint(t *testing.T) {
+	rule := internalconfig.RequestScopedErrorRule{Status: internalconfig.StatusNoHTTP, Match: []string{"connection refused"}, Action: "continue-and-cooldown"}
+	m, hubCalls := newHubWithFallback(t, "refused", rule, func(context.Context) error { return errRefused })
 	for i := 0; i < 2; i++ {
 		resp, errExec := m.Execute(context.Background(), []string{"claude"}, cliproxyexecutor.Request{Model: "claude-3"}, cliproxyexecutor.Options{})
 		if errExec != nil || string(resp.Payload) != `{"result":"fallback"}` {
 			t.Fatalf("request %d: resp=%s err=%v, want fallback success", i, resp.Payload, errExec)
 		}
 	}
-	if hubCalls != 1 {
-		t.Fatalf("hub dialed %d times, want 1 (cooled after the first refusal)", hubCalls)
+	if *hubCalls != 1 {
+		t.Fatalf("hub dialed %d times, want 1 (cooled after the first refusal)", *hubCalls)
 	}
 }
+
+// Only an explicit `status: 0` that matches cools the credential. A client
+// cancel, a status-less failure the rule does not match, and a rule that omits
+// status (which matched nothing before status 0 existed) leave it in rotation.
+func TestRequestScopedErrors_StatusZeroLeavesOtherFailuresUncooled(t *testing.T) {
+	noHTTP := internalconfig.RequestScopedErrorRule{Status: internalconfig.StatusNoHTTP, Match: []string{"connection refused", "EOF"}, Action: "continue-and-cooldown"}
+	cases := []struct {
+		name   string
+		rule   internalconfig.RequestScopedErrorRule
+		hubErr func(ctx context.Context) error
+		cancel bool
+	}{
+		{name: "client-cancel", rule: noHTTP, cancel: true, hubErr: func(ctx context.Context) error {
+			cancel := ctx.Value(cancelKey{}).(context.CancelFunc)
+			cancel()
+			return ctx.Err()
+		}},
+		{name: "non-matching", rule: noHTTP, hubErr: func(context.Context) error {
+			return &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("i/o timeout")}
+		}},
+		{name: "status-omitted", rule: internalconfig.RequestScopedErrorRule{Match: []string{"connection refused"}, Action: "continue-and-cooldown"},
+			hubErr: func(context.Context) error { return errRefused }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m, hubCalls := newHubWithFallback(t, tc.name, tc.rule, tc.hubErr)
+			for i := 0; i < 2; i++ {
+				ctx, cancel := context.WithCancel(context.Background())
+				ctx = context.WithValue(ctx, cancelKey{}, context.CancelFunc(cancel))
+				_, errExec := m.Execute(ctx, []string{"claude"}, cliproxyexecutor.Request{Model: "claude-3"}, cliproxyexecutor.Options{})
+				cancel()
+				if tc.cancel != (errExec != nil) {
+					t.Fatalf("request %d: err=%v, cancelled=%v", i, errExec, tc.cancel)
+				}
+			}
+			if *hubCalls != 2 {
+				t.Fatalf("hub tried %d times in 2 requests, want 2 (not cooled)", *hubCalls)
+			}
+		})
+	}
+}
+
+type cancelKey struct{}
 
 func TestRequestScopedErrors_MatchRegexr(t *testing.T) {
 	previous := quotaCooldownDisabled.Load()

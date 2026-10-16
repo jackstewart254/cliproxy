@@ -96,6 +96,9 @@ type Auth struct {
 	NextRetryAfter time.Time `json:"next_retry_after"`
 	// ModelStates tracks per-model runtime availability data.
 	ModelStates map[string]*ModelState `json:"model_states,omitempty"`
+	// HealthBlockedUntil blocks every model of the credential until this time,
+	// set by the endpoint health check (in-memory only; see SetHealthBlock).
+	HealthBlockedUntil time.Time `json:"-"`
 
 	// Runtime carries non-serialisable data used during execution (in-memory only).
 	Runtime any `json:"-"`

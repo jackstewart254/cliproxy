@@ -169,6 +169,9 @@ func (s *ConfigSynthesizer) synthesizeClaudeKeys(ctx *SynthesisContext) []*corea
 		addWeightToAttrs(ck.Weight, attrs)
 		if base != "" {
 			attrs["base_url"] = base
+			if ck.HealthCheck {
+				attrs["health_check"] = "true"
+			}
 		}
 		if ck.RebuildMidSystemMessage {
 			attrs["rebuild_mid_system_message"] = "true"

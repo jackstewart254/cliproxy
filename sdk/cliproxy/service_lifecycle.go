@@ -100,6 +100,7 @@ func (s *Service) Run(ctx context.Context) error {
 		s.coreManager.StartAutoRefresh(ctx, interval)
 		log.Infof("core auth auto-refresh started (interval=%s)", interval)
 		s.startClaudeMeterProbe(ctx)
+		s.startHealthCheck(ctx)
 	}
 
 	if !homeEnabled {

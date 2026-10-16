@@ -196,11 +196,16 @@ func matchRequestScopedErrorAction(auth *Auth, err error, cfg *internalconfig.Co
 	body := extractErrorBody(err)
 
 	for _, rule := range rules {
-		// Status 0 matches failures with no HTTP status (connection refused, dial
-		// timeout, DNS, reset), which otherwise never cool a credential. A
-		// credential with its own endpoint, such as a hub proxy, can then step
-		// aside while that endpoint is unreachable.
-		if rule.Status < 0 || rule.Status != statusCode {
+		// An explicit `status: 0` (StatusNoHTTP) matches failures with no HTTP
+		// status (connection refused, dial timeout, DNS, reset), which otherwise
+		// never cool a credential. A rule that omits status matches nothing.
+		want := rule.Status
+		if want == internalconfig.StatusNoHTTP {
+			want = 0
+		} else if want <= 0 {
+			continue
+		}
+		if want != statusCode {
 			continue
 		}
 		if len(rule.Match) == 0 && len(rule.MatchRegexr) == 0 {
