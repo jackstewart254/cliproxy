@@ -89,6 +89,25 @@ management:
   #     url: "http://jacks-desktop.taila5e4cd.ts.net" # the other machine's Tailscale Serve URL
   #     management-key: "the other machine's management secret-key, in plain text"
 
+  # Groups for this machine's own programs on the Devices tab, ahead of the built in ones
+  # (Claude Code, Tailscale, vendor apps, drivers, Windows). A process joins a group when its
+  # name, program path or command line contains any "match" (any case); the shells and
+  # helpers it starts join with it. Command lines are read only for node, python, shells
+  # and the like. kind: work (the default), app, remote, removable, driver or system.
+  # process-groups:
+  #   - name: "Grad jobs scraper"
+  #     description: "Finds graduate jobs and saves them."
+  #     match: ["grad-jobs"]
+  #   - name: "CLI proxy"
+  #     description: "This proxy and the script that starts it."
+  #     match: ["cliproxy"]
+  #   - name: "WhisperX transcription"
+  #     description: "Turns voice memos into text on the graphics card."
+  #     match: ["whisperx"]
+  #   - name: "Bank sync"
+  #     description: "Pulls in bank transactions."
+  #     match: ["bank-sync"]
+
 # Client authentication for the proxy API. These are not upstream provider keys.
 access:
   # API keys for authentication

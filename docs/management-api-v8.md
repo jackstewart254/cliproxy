@@ -133,6 +133,14 @@ GPUs and temperatures come from tools the machine already has, read every
   temperature without a driver such as LibreHardwareMonitor, which is not
   installed.
 
+Each reading also sorts the machine's processes into groups (`groups`): the
+machine's own `management.process-groups` first, then built in groups for
+Claude Code, Tailscale and SSH, common vendor apps, drivers and the system. A
+process no group claims joins its parent's group, so a job's shells and
+helpers count toward the job. Program paths and parents are read once per
+process; command lines only for scripted programs (node, python, shells).
+The dashboard turns the reading into one plain verdict per machine.
+
 Machines reach each other
 over Tailscale only, with no SSH tunnels: the device's proxy stays bound to
 127.0.0.1 and is published to the tailnet with Tailscale Serve (never Funnel),

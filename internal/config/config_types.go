@@ -335,6 +335,9 @@ type RemoteManagement struct {
 	// dashboard's Devices tab shows. This server fetches their stats, so a
 	// device's management key never reaches the browser.
 	Devices []Device `yaml:"devices,omitempty" json:"-"`
+	// ProcessGroups names groups of this machine's processes for the Devices
+	// tab, such as your own jobs, ahead of the built in groups.
+	ProcessGroups []ProcessGroup `yaml:"process-groups,omitempty" json:"-"`
 }
 
 // Device is another machine's proxy, reached at URL with its management key.
@@ -342,6 +345,16 @@ type Device struct {
 	Name          string `yaml:"name"`
 	URL           string `yaml:"url"`
 	ManagementKey string `yaml:"management-key"`
+}
+
+// ProcessGroup is a named group of processes: every process whose name,
+// program path or command line contains one of Match (any case). Kind is
+// work (the default), app, remote, removable, driver or system.
+type ProcessGroup struct {
+	Name        string   `yaml:"name"`
+	Kind        string   `yaml:"kind,omitempty"`
+	Description string   `yaml:"description,omitempty"`
+	Match       []string `yaml:"match"`
 }
 
 // QuotaExceeded defines the behavior when API quota limits are exceeded.
