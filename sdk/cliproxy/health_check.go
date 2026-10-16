@@ -18,11 +18,12 @@ import (
 // be timed out (no timeouts after connect), so this checks the endpoint off the
 // request path instead: GET {base-url}/healthz every healthCheckInterval. After
 // healthCheckFailures failures in a row the credential is blocked for all
-// models, so new requests skip it; the first success lifts the block. The
+// models, so new requests skip it: at most 2*interval+timeout (27s) after the
+// endpoint stops answering. The first success lifts the block. The
 // block outlives two missed rounds and then expires by itself, so a stopped
 // checker never leaves a credential blocked.
 var (
-	healthCheckInterval = 15 * time.Second
+	healthCheckInterval = 12 * time.Second
 	healthCheckTimeout  = 3 * time.Second
 )
 

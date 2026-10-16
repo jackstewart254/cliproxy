@@ -660,7 +660,7 @@ upstream:
 #             - "prompt is too long"
 #           action: "stop"
 #       base-url: "https://www.example.com" # use the custom claude API endpoint
-#       health-check: true # optional: poll GET {base-url}/healthz every 15s; two failures in a row take this credential out of rotation (all models) until it answers again
+#       health-check: true # optional: poll GET {base-url}/healthz every 12s (3s timeout); two failures in a row take this credential out of rotation (all models) within 27s, until it answers again
 #       headers:
 #         X-Custom-Header: "custom-value"
 #         # Values starting with "$" dynamically copy the header value from downstream client requests.
