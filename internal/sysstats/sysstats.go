@@ -1,13 +1,18 @@
 // Package sysstats reads the load on the host this proxy runs on: CPU,
-// memory, disks and the busiest processes, for the dashboard's Devices tab.
+// memory, disks, GPUs, temperatures and the busiest processes, for the
+// dashboard's Devices tab.
 package sysstats
 
 import (
 	"context"
 	"fmt"
+	"math"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -33,6 +38,8 @@ type Stats struct {
 	Memory          Memory        `json:"memory"`
 	Swap            Memory        `json:"swap"`
 	Disks           []Disk        `json:"disks"`
+	GPUs            []GPU         `json:"gpus,omitempty"`  // empty without nvidia-smi
+	Temps           []Temp        `json:"temps,omitempty"` // empty when no sensor is readable
 	Processes       int           `json:"processes"`
 	Threads         int           `json:"threads"`
 	// Unreadable counts processes this user may not inspect (on macOS,
@@ -68,6 +75,23 @@ type Disk struct {
 	Free  uint64 `json:"free"`
 }
 
+// GPU is one NVIDIA card as nvidia-smi reports it. Memory is in bytes.
+// Celsius and Watts are zero when the card does not report them.
+type GPU struct {
+	Name        string  `json:"name"`
+	Percent     float64 `json:"percent"`
+	MemoryUsed  uint64  `json:"memory_used"`
+	MemoryTotal uint64  `json:"memory_total"`
+	Celsius     float64 `json:"celsius,omitempty"`
+	Watts       float64 `json:"watts,omitempty"`
+}
+
+// Temp is one temperature sensor.
+type Temp struct {
+	Label   string  `json:"label"`
+	Celsius float64 `json:"celsius"`
+}
+
 // Process is one process. CPUPercent is a share of one core, as top shows
 // it, so a busy multi-threaded process passes 100.
 type Process struct {
@@ -97,6 +121,11 @@ const (
 	primeGap   = 250 * time.Millisecond
 	staleAfter = 10 * time.Second
 	diskEvery  = time.Minute
+	// GPU load moves faster than disks, so sensors are read more often.
+	// All the tools of one reading share sensorBudget; a tool that is
+	// missing, fails or runs past it leaves its fields out.
+	sensorEvery  = 5 * time.Second
+	sensorBudget = 200 * time.Millisecond
 )
 
 type sample struct {
@@ -114,11 +143,14 @@ type procSample struct {
 
 var reader struct {
 	sync.Mutex
-	static  *Stats // fields that never change
-	prev    *sample
-	last    *Stats
-	disks   []Disk
-	disksAt time.Time
+	static    *Stats // fields that never change
+	prev      *sample
+	last      *Stats
+	disks     []Disk
+	disksAt   time.Time
+	gpus      []GPU
+	temps     []Temp
+	sensorsAt time.Time
 }
 
 // Read returns a reading of this host. It never runs a goroutine of its own:
@@ -137,10 +169,11 @@ func Read(ctx context.Context) (*Stats, error) {
 	prev := reader.prev
 	if prev == nil || cur.at.Sub(prev.at) > staleAfter {
 		prev = cur
+		refreshSensors(ctx) // inside the wait, so it adds no time
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
-		case <-time.After(primeGap):
+		case <-time.After(primeGap - time.Since(prev.at)):
 		}
 		if cur, err = takeSample(ctx); err != nil {
 			return nil, err
@@ -231,6 +264,8 @@ func build(ctx context.Context, prev, cur *sample) *Stats {
 		reader.disks, reader.disksAt = readDisks(ctx), time.Now()
 	}
 	s.Disks = reader.disks
+	refreshSensors(ctx)
+	s.GPUs, s.Temps = reader.gpus, reader.temps
 
 	list := make([]Process, 0, len(cur.procs))
 	for pid, p := range cur.procs {
@@ -302,6 +337,93 @@ func readDisks(ctx context.Context) []Disk {
 		}
 		seen[[2]uint64{u.Total, u.Free}] = true
 		out = append(out, Disk{Mount: m, Total: u.Total, Free: u.Free})
+	}
+	return out
+}
+
+// refreshSensors rereads GPUs and temperatures once sensorEvery has passed.
+func refreshSensors(ctx context.Context) {
+	if time.Since(reader.sensorsAt) > sensorEvery {
+		reader.gpus, reader.temps = readSensors(ctx)
+		reader.sensorsAt = time.Now()
+	}
+}
+
+// readSensors reads NVIDIA cards through nvidia-smi and, on macOS, the CPU
+// and GPU temperatures through smctemp (Homebrew narugit/tap/smctemp).
+// Neither needs root.
+func readSensors(ctx context.Context) ([]GPU, []Temp) {
+	// The result is shared for sensorEvery, so a caller that hangs up must
+	// not cut it short; sensorBudget alone bounds it.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sensorBudget)
+	defer cancel()
+	var temps []Temp
+	if runtime.GOOS == "darwin" {
+		for _, sensor := range [][2]string{{"CPU", "-c"}, {"GPU", "-g"}} {
+			// A reading outside 0-150 °C is a failed read, not a temperature.
+			if c := number(string(run(ctx, "smctemp", sensor[1]))); c > 0 && c < 150 {
+				temps = append(temps, Temp{Label: sensor[0], Celsius: c})
+			}
+		}
+	}
+	gpus := parseNvidiaSMI(run(ctx, "nvidia-smi", "--query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw", "--format=csv,noheader,nounits"))
+	for _, g := range gpus {
+		if g.Celsius > 0 {
+			temps = append(temps, Temp{Label: g.Name, Celsius: g.Celsius})
+		}
+	}
+	return gpus, temps
+}
+
+// parseNvidiaSMI reads nvidia-smi's csv,noheader,nounits lines: name,
+// utilization %, memory used and total in MiB, temperature, power draw.
+// A field it cannot read ("[N/A]") stays zero.
+func parseNvidiaSMI(out []byte) []GPU {
+	var gpus []GPU
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		f := strings.Split(line, ",")
+		if len(f) != 6 {
+			continue
+		}
+		gpus = append(gpus, GPU{
+			Name:        strings.TrimSpace(f[0]),
+			Percent:     number(f[1]),
+			MemoryUsed:  uint64(number(f[2]) * (1 << 20)),
+			MemoryTotal: uint64(number(f[3]) * (1 << 20)),
+			Celsius:     number(f[4]),
+			Watts:       number(f[5]),
+		})
+	}
+	return gpus
+}
+
+// number reads one figure from a tool's output, or 0. NaN and infinities
+// are 0 too: they would make the whole reading fail to encode.
+func number(s string) float64 {
+	v, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
+	if err != nil || math.IsNaN(v) || math.IsInf(v, 0) || v < 0 {
+		return 0
+	}
+	return v
+}
+
+// run runs a tool and returns what it printed, or nil when it is missing,
+// fails or outlasts ctx. WaitDelay stops a killed tool's children from
+// holding its output open, so nothing outlives the call.
+func run(ctx context.Context, name string, args ...string) []byte {
+	path, err := exec.LookPath(name)
+	if err != nil && runtime.GOOS == "darwin" {
+		// launchd starts the proxy with a PATH that leaves Homebrew out.
+		path, err = exec.LookPath(filepath.Join("/opt/homebrew/bin", name))
+	}
+	if err != nil {
+		return nil
+	}
+	cmd := exec.CommandContext(ctx, path, args...)
+	cmd.WaitDelay = 50 * time.Millisecond
+	out, err := cmd.Output()
+	if err != nil {
+		return nil
 	}
 	return out
 }

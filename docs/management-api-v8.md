@@ -89,7 +89,7 @@ retain the corresponding business operation's fields.
 | --- | --- | --- |
 | `/config/upstream/<provider>` | GET, PUT, PATCH, DELETE | Manage shared provider settings. |
 | `/server/latest-version` | GET | Get latest release information. |
-| `/server/system` | GET | Read the load on this proxy's host: CPU (total, per core), load average (not on Windows), memory, swap, disks, process and thread counts, the 15 busiest processes by CPU and by memory, and headroom (idle CPU, free memory). CPU percentages cover the time since the previous reading, or a fresh 250 ms sample when that is over 10 s old; calls within 1 s share a reading. |
+| `/server/system` | GET | Read the load on this proxy's host: CPU (total, per core), load average (not on Windows), memory, swap, disks, process and thread counts, the 15 busiest processes by CPU and by memory, headroom (idle CPU, free memory), and, when the host has the tools, `gpus` (NVIDIA, from `nvidia-smi`) and `temps` (macOS CPU and GPU from `smctemp`, plus each NVIDIA card); both are left out otherwise and refresh every 5 s. CPU percentages cover the time since the previous reading, or a fresh 250 ms sample when that is over 10 s old; calls within 1 s share a reading. |
 | `/requests/api-call` | POST | Make an authenticated upstream call. |
 | `/routing/cooldown/reset` | POST | Clear credential cooldown. |
 | `/routing/model-definitions/<channel>` | GET | Get model definitions. |
@@ -122,7 +122,18 @@ retain the corresponding business operation's fields.
 The dashboard's Devices tab shows this host and each machine listed under
 `management.devices`. This server fetches each device's `/server/system` itself,
 so a device's management key never reaches the browser. On macOS, processes owned
-by other users are missing from the process lists without root. Machines reach each other
+by other users are missing from the process lists without root.
+
+GPUs and temperatures come from tools the machine already has, read every
+5 seconds within 200 ms; a missing or slow tool leaves its part out:
+- NVIDIA cards (load, memory, temperature, power) from `nvidia-smi`.
+- macOS CPU and GPU temperatures from `smctemp` (Homebrew
+  `narugit/tap/smctemp`; no root needed).
+- Windows CPU temperature is not shown. Windows exposes no reliable Ryzen
+  temperature without a driver such as LibreHardwareMonitor, which is not
+  installed.
+
+Machines reach each other
 over Tailscale only, with no SSH tunnels: the device's proxy stays bound to
 127.0.0.1 and is published to the tailnet with Tailscale Serve (never Funnel),
 for example `tailscale serve --bg --http=80 http://127.0.0.1:8317`. A device's
