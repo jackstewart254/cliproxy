@@ -391,6 +391,16 @@ func (f *fallbackRoundTripper) RoundTrip(req *http.Request) (*http.Response, err
 	return f.fallback.RoundTrip(req)
 }
 
+// gatewayTransport carries requests to custom API-key endpoints (a hub proxy on
+// the tailnet, a Messages gateway). It is the default transport with a 5s
+// connect timeout instead of 30s, so an offline endpoint fails fast and the
+// request moves to the next credential. Nothing after connect is timed.
+var gatewayTransport http.RoundTripper = func() http.RoundTripper {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.DialContext = (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext
+	return transport
+}()
+
 // NewUtlsHTTPClient creates an HTTP client using provider-specific TLS
 // fingerprints for protected hosts. It uses Claude Code's Node/OpenSSL profile
 // for Anthropic and a Chrome profile for ChatGPT, with a standard-transport
@@ -405,7 +415,7 @@ func NewUtlsHTTPClient(ctx context.Context, cfg *config.Config, auth *cliproxyau
 
 	var chromeRT http.RoundTripper = newUtlsRoundTripper(proxyURL)
 	var anthropicRT http.RoundTripper = cachedClaudeCodeRoundTripper(proxyURL)
-	var standardTransport http.RoundTripper = http.DefaultTransport
+	standardTransport := gatewayTransport
 	if proxyURL != "" {
 		if transport := buildProxyTransport(proxyURL); transport != nil {
 			standardTransport = transport

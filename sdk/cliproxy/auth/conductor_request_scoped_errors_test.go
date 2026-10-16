@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"net"
 	"net/http"
 	"testing"
 	"time"
@@ -398,6 +399,58 @@ func TestRequestScopedErrors_ActionContinueAndCooldown(t *testing.T) {
 	a1, ok1 := m.GetByID("auth-claude-continue-cool-1")
 	if !ok1 || !a1.Unavailable || a1.NextRetryAfter.IsZero() {
 		t.Fatalf("expected auth1 to be in cooldown, got unavailable=%v, nextRetry=%v", a1.Unavailable, a1.NextRetryAfter)
+	}
+}
+
+// A status 0 rule cools a credential whose endpoint refuses connections, so the
+// next request goes straight to the fallback instead of dialing it again.
+func TestRequestScopedErrors_StatusZeroCoolsUnreachableEndpoint(t *testing.T) {
+	previous := quotaCooldownDisabled.Load()
+	quotaCooldownDisabled.Store(false)
+	t.Cleanup(func() { quotaCooldownDisabled.Store(previous) })
+
+	m := NewManager(nil, nil, nil)
+	hub := &Auth{
+		ID:         "auth-claude-hub-unreachable",
+		Provider:   "claude",
+		Status:     StatusActive,
+		Attributes: map[string]string{"priority": "100"},
+		Metadata: map[string]any{
+			"request_scoped_errors": []internalconfig.RequestScopedErrorRule{
+				{Status: 0, Match: []string{"connection refused"}, Action: "continue-and-cooldown"},
+			},
+		},
+	}
+	fallback := &Auth{ID: "auth-claude-hub-fallback", Provider: "claude", Status: StatusActive}
+	reg := registry.GetGlobalRegistry()
+	for _, a := range []*Auth{hub, fallback} {
+		reg.RegisterClient(a.ID, "claude", []*registry.ModelInfo{{ID: "claude-3"}})
+		t.Cleanup(func() { reg.UnregisterClient(a.ID) })
+		if _, err := m.Register(context.Background(), a); err != nil {
+			t.Fatalf("register %s: %v", a.ID, err)
+		}
+	}
+
+	hubCalls := 0
+	m.RegisterExecutor(&mockCustomErrorExecutor{
+		identifier: "claude",
+		executeFn: func(ctx context.Context, auth *Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
+			if auth.ID == hub.ID {
+				hubCalls++
+				return cliproxyexecutor.Response{}, &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connect: connection refused")}
+			}
+			return cliproxyexecutor.Response{Payload: []byte(`{"result":"fallback"}`)}, nil
+		},
+	})
+
+	for i := 0; i < 2; i++ {
+		resp, errExec := m.Execute(context.Background(), []string{"claude"}, cliproxyexecutor.Request{Model: "claude-3"}, cliproxyexecutor.Options{})
+		if errExec != nil || string(resp.Payload) != `{"result":"fallback"}` {
+			t.Fatalf("request %d: resp=%s err=%v, want fallback success", i, resp.Payload, errExec)
+		}
+	}
+	if hubCalls != 1 {
+		t.Fatalf("hub dialed %d times, want 1 (cooled after the first refusal)", hubCalls)
 	}
 }
 

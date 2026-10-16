@@ -480,7 +480,7 @@ upstream:
 #       disable-cooling: false # optional override: true disables cooling, false enables it; omit to inherit global
 #       request-retry: 3 # optional per-auth override; 0 disables additional rounds; omit or set < 0 to inherit global
 #       request-scoped-errors: # optional: custom rules to classify upstream errors by status and body patterns
-#         - status: 400        # HTTP status code to match
+#         - status: 400        # HTTP status code to match; 0 matches failures with no HTTP status (connection refused, dial timeout, DNS, reset)
 #           match:             # optional: string contains matching
 #             - "maximum_context_length"
 #             - "context_length_exceeded"
