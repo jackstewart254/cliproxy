@@ -120,3 +120,36 @@ func TestManagementSavesKeepHubFields(t *testing.T) {
 		})
 	}
 }
+
+// The same holds for rules under oauth-request-scoped-errors.<provider>.
+func TestManagementSavesKeepOAuthRuleStatusZero(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("config-version: 8\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.LoadConfigOptional(path, false)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	h := &Handler{cfg: cfg, configFilePath: path}
+	rec := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(rec)
+	ctx.Request = httptest.NewRequest(http.MethodPut, "/v0/management/oauth-request-scoped-errors",
+		strings.NewReader(`{"claude":[{"status":0,"match":["EOF"],"action":"continue-and-cooldown"}]}`))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	h.PutOAuthRequestScopedErrors(ctx)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	saved, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := config.LoadConfigOptional(path, false)
+	if err != nil {
+		t.Fatalf("reload saved file: %v\n%s", err, saved)
+	}
+	if rules := reloaded.OAuthRequestScopedErrors["claude"]; len(rules) == 0 || rules[0].Status != config.StatusNoHTTP {
+		t.Fatalf("explicit status 0 lost after save: %+v\n%s", rules, saved)
+	}
+}

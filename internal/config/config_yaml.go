@@ -386,7 +386,8 @@ func isKnownDefaultValue(path []string, node *yaml.Node) bool {
 
 	// A request-scoped error rule's explicit `status: 0` matches failures with no
 	// HTTP status; an omitted status is never rendered, so a rendered 0 is explicit.
-	if len(path) > 1 && path[len(path)-1] == "status" && path[len(path)-2] == "request-scoped-errors" && node != nil && node.Kind == yaml.ScalarNode && node.Tag == "!!int" {
+	// Rules sit under request-scoped-errors or oauth-request-scoped-errors.<provider>.
+	if len(path) > 1 && path[len(path)-1] == "status" && (path[len(path)-2] == "request-scoped-errors" || len(path) == 3 && path[0] == "oauth-request-scoped-errors") && node != nil && node.Kind == yaml.ScalarNode && node.Tag == "!!int" {
 		return false
 	}
 
