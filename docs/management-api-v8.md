@@ -89,6 +89,7 @@ retain the corresponding business operation's fields.
 | --- | --- | --- |
 | `/config/upstream/<provider>` | GET, PUT, PATCH, DELETE | Manage shared provider settings. |
 | `/server/latest-version` | GET | Get latest release information. |
+| `/server/system` | GET | Read the load on this proxy's host: CPU (total, per core), load average (not on Windows), memory, swap, disks, process and thread counts, the 15 busiest processes by CPU and by memory, and headroom (idle CPU, free memory). CPU percentages cover the time since the previous reading, or a fresh 250 ms sample when that is over 10 s old; calls within 1 s share a reading. |
 | `/requests/api-call` | POST | Make an authenticated upstream call. |
 | `/routing/cooldown/reset` | POST | Clear credential cooldown. |
 | `/routing/model-definitions/<channel>` | GET | Get model definitions. |
@@ -115,6 +116,31 @@ retain the corresponding business operation's fields.
 | `/plugins/store` | GET | List the plugin store. |
 | `/plugins/store/<id>/install` | POST | Install or update a plugin. |
 | `/plugins/<id>/quota` | GET, POST, DELETE | Read, fetch, or reset plugin quota. |
+
+### Devices
+
+The dashboard's Devices tab shows this host and each machine listed under
+`management.devices`. This server fetches each device's `/server/system` itself,
+so a device's management key never reaches the browser. On macOS, processes owned
+by other users are missing from the process lists without root. Machines reach each other
+over Tailscale only, with no SSH tunnels: the device's proxy stays bound to
+127.0.0.1 and is published to the tailnet with Tailscale Serve (never Funnel),
+for example `tailscale serve --bg --http=80 http://127.0.0.1:8317`. A device's
+`url` is that Serve URL and `management-key` is its management `secret-key` in
+plain text:
+
+```yaml
+management:
+  devices:
+    - name: "jacks-desktop"
+      url: "http://jacks-desktop.taila5e4cd.ts.net"
+      management-key: "<the PC's management secret-key>"
+```
+
+Serve connects to the device's proxy from 127.0.0.1, so `allow-remote` can stay
+`false` there, and failed key attempts count toward that device's loopback ban
+(5 failures, 30 minutes). A device that answers 401 is not asked again until this
+proxy's config reloads.
 
 ## OAuth
 

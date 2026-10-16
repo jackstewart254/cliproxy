@@ -645,6 +645,33 @@ a.tr:hover, .tr.click:hover { background: var(--hover); cursor: pointer; }
 .pop .pfoot button { align-self: flex-start; height: 24px; padding: 0 6px; border-radius: 8px; font-size: 12px; font-weight: 500; }
 .pop .pfoot button:hover { background: var(--surface-2); }
 
+/* Devices */
+.tblwrap.devtbl .tbl { min-width: 0; }
+.devtbl .meter { width: auto; flex: 1 1 64px; min-width: 24px; }
+.devname { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.devname b { font-weight: 500; }
+.devname span { font-size: 12px; }
+.devdot { display: block; width: 8px; height: 8px; border-radius: 999px; background: var(--chart-other); flex-shrink: 0; }
+.devdot.on { background: var(--ok-text); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok-text) 18%, transparent); }
+.crumbs .here .devdot { margin-right: 2px; }
+.room { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.room i { width: 6px; height: 6px; border-radius: 999px; background: currentColor; flex-shrink: 0; }
+.room.ok { color: var(--ok-text); }
+.room.warn { color: var(--warn-text); }
+.room.bad { color: var(--error-text); }
+.devstats { flex-wrap: wrap; row-gap: 20px; }
+.devstats .stat { min-width: 132px; }
+.devstats .meter { width: 100%; margin: 2px 0; }
+.devstats .s { overflow: hidden; text-overflow: ellipsis; }
+.devcores { display: grid; grid-template-columns: repeat(auto-fill, minmax(176px, 1fr)); gap: 10px 32px; padding: 0 24px 24px; }
+.devcore { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.devcore > .muted { width: 18px; text-align: right; flex-shrink: 0; }
+.devcore .metercell { flex: 1 1 0; min-width: 0; }
+.devcore .meter { flex: 1 1 0; width: auto; }
+.devcore .metercell > span:last-child { width: 36px; text-align: right; }
+.sortbtn { display: inline-flex; align-items: center; gap: 4px; color: var(--muted-fg); }
+.sortbtn:hover, .sortbtn.on { color: var(--fg); }
+
 /* Error and toast */
 .banner { margin: 12px 24px 0; padding: 8px 12px; border-radius: 8px; background: #F99C0014; color: var(--warn-text); font-size: 13px; }
 .toast { position: fixed; bottom: 24px; right: 24px; z-index: 50; padding: 10px 14px; border-radius: 10px; background: var(--popover); box-shadow: var(--popover-shadow); font-size: 13px; max-width: 360px; }

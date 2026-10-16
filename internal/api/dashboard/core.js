@@ -945,7 +945,7 @@ export function seg(items, active, attr, cls = "") {
   return `<div class="seg ${cls}">${items.map((t) => `<button class="${t.id === active ? "on" : ""}" ${attr}="${esc(t.id)}">${esc(t.label)}</button>`).join("")}</div>`;
 }
 
-// cols: [{label, w (px) or grow, r (right aligned), cls}]; rows: [{cells: [html], href, cls, attrs}]
+// cols: [{label, head (html in place of label), w (px) or grow, r (right aligned), cls}]; rows: [{cells: [html], href, cls, attrs}]
 export function table(cols, rows, opts = {}) {
   const cell = (c, html, i) => {
     // opts.fit lets sized columns shrink to c.min (default 70%) instead of scrolling sideways.
@@ -954,7 +954,7 @@ export function table(cols, rows, opts = {}) {
       : `style="width:${c.w}px;flex:0 0 ${c.w}px"`;
     return `<div class="c ${c.w ? "" : "g"} ${c.r ? "r" : ""} ${c.cls || ""}" ${style}>${html ?? ""}</div>`;
   };
-  const head = opts.noHead ? "" : `<div class="tr head">${cols.map((c, i) => cell(c, esc(c.label || ""), i)).join("")}</div>`;
+  const head = opts.noHead ? "" : `<div class="tr head">${cols.map((c, i) => cell(c, c.head ?? esc(c.label || ""), i)).join("")}</div>`;
   const body = rows.map((r) => {
     if (r.group) return `<div class="tr group ${r.cls || ""}">${r.html}</div>`;
     const tag = r.href ? "a" : "div";
