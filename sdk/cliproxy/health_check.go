@@ -19,7 +19,9 @@ import (
 // request path instead: GET {base-url}/healthz every healthCheckInterval. After
 // healthCheckFailures failures in a row the credential is blocked for all
 // models, so new requests skip it: at most 2*interval+timeout (27s) after the
-// endpoint stops answering. The first success lifts the block. The
+// endpoint stops answering. Blocking also cancels the attempts in flight on it,
+// which then fail over to the next credential. The first success lifts the
+// block. The
 // block outlives two missed rounds and then expires by itself, so a stopped
 // checker never leaves a credential blocked.
 var (
@@ -98,7 +100,10 @@ func (s *Service) probeHealth(ctx context.Context, auth *coreauth.Auth, url stri
 	if errReq != nil {
 		return errReq
 	}
-	resp, errDo := helps.NewProxyAwareHTTPClient(ctx, s.cfg, auth, healthCheckTimeout).Do(req)
+	s.cfgMu.RLock()
+	cfg := s.cfg
+	s.cfgMu.RUnlock()
+	resp, errDo := helps.NewProxyAwareHTTPClient(ctx, cfg, auth, healthCheckTimeout).Do(req)
 	if errDo != nil {
 		return errDo
 	}

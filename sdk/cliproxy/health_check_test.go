@@ -15,11 +15,18 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/config"
 )
 
-type hungHubExecutor struct{ hubID string }
+type hungHubExecutor struct {
+	hubID    string
+	inFlight chan struct{}
+}
 
 func (e hungHubExecutor) Identifier() string { return "claude" }
 func (e hungHubExecutor) Execute(ctx context.Context, auth *coreauth.Auth, _ cliproxyexecutor.Request, _ cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
 	if auth.ID == e.hubID {
+		select {
+		case e.inFlight <- struct{}{}:
+		default:
+		}
 		<-ctx.Done() // a hub that accepted the request and never answers
 		return cliproxyexecutor.Response{}, ctx.Err()
 	}
@@ -39,8 +46,8 @@ func (e hungHubExecutor) HttpRequest(context.Context, *coreauth.Auth, *http.Requ
 }
 
 // A hub that hangs on /v1/messages, with a /healthz that hangs and then fails,
-// is taken out of rotation after two rounds, so new requests go to the
-// fallback; one healthy round puts it back.
+// is taken out of rotation after two rounds: the request stuck on it and new
+// requests go to the fallback; one healthy round puts it back.
 func TestHealthCheckBlocksHungHubAndLiftsOnRecovery(t *testing.T) {
 	previous := healthCheckTimeout
 	healthCheckTimeout = 100 * time.Millisecond
@@ -71,7 +78,8 @@ func TestHealthCheckBlocksHungHubAndLiftsOnRecovery(t *testing.T) {
 			t.Fatalf("register %s: %v", a.ID, err)
 		}
 	}
-	manager.RegisterExecutor(hungHubExecutor{hubID: hub.ID})
+	exec := hungHubExecutor{hubID: hub.ID, inFlight: make(chan struct{}, 1)}
+	manager.RegisterExecutor(exec)
 	service := &Service{cfg: &config.Config{}, coreManager: manager}
 	served := func(timeout time.Duration) string {
 		reqCtx, cancel := context.WithTimeout(ctx, timeout)
@@ -88,8 +96,19 @@ func TestHealthCheckBlocksHungHubAndLiftsOnRecovery(t *testing.T) {
 	if got := served(200 * time.Millisecond); got == "fallback" {
 		t.Fatalf("one failed round already moved traffic: %q", got)
 	}
+	// A request stuck on the hub when the block engages moves to the fallback.
+	select {
+	case <-exec.inFlight: // the timed-out request above
+	default:
+	}
+	stuck := make(chan string, 1)
+	go func() { stuck <- served(10 * time.Second) }()
+	<-exec.inFlight
 	mode.Store("fail")
 	service.checkHealth(ctx, failures) // healthz 502: failure 2, blocked
+	if got := <-stuck; got != "fallback" {
+		t.Fatalf("in-flight request got %q after the block, want fallback", got)
+	}
 	if got := served(5 * time.Second); got != "fallback" {
 		t.Fatalf("after two failed rounds got %q, want fallback", got)
 	}

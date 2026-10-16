@@ -349,7 +349,7 @@ func flattenV8(node *yaml.Node) (*yaml.Node, error) {
 var sharedKeyFields = map[string]bool{
 	"priority": true, "prefix": true, "proxy-url": true, "headers": true,
 	"models": true, "excluded-models": true, "disable-cooling": true,
-	"request-retry": true, "request-scoped-errors": true, "health-check": true,
+	"request-retry": true, "request-scoped-errors": true,
 }
 
 func expandV8Groups(groups *yaml.Node, provider string) (*yaml.Node, error) {

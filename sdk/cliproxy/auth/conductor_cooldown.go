@@ -1057,30 +1057,6 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 	m.updateSessionAffinity(result)
 }
 
-// SetHealthBlock blocks every model of an auth until the given time, or lifts
-// the block when until is zero. The endpoint health check uses it to take a
-// credential whose endpoint stopped answering out of rotation; the block is
-// separate from request cooldowns, so lifting it never clears a 401 or quota.
-func (m *Manager) SetHealthBlock(authID string, until time.Time) {
-	if m == nil {
-		return
-	}
-	m.mu.Lock()
-	auth, ok := m.auths[authID]
-	if !ok || auth == nil || auth.HealthBlockedUntil.Equal(until) {
-		m.mu.Unlock()
-		return
-	}
-	auth.HealthBlockedUntil = until
-	auth.Generation++
-	auth.UpdatedAt = time.Now()
-	snapshot := auth.Clone()
-	m.mu.Unlock()
-	if m.scheduler != nil {
-		m.scheduler.upsertAuthResult(snapshot, nil, true)
-	}
-}
-
 func (m *Manager) updateSessionAffinity(result Result) {
 	if m == nil {
 		return
