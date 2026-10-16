@@ -95,6 +95,33 @@ management:
   # GitHub repository for the management control panel. Accepts a repository URL or releases API URL.
   panel-github-repository: "https://github.com/router-for-me/Cli-Proxy-API-Management-Center"
 
+  # Other machines running this proxy, shown on the dashboard's Devices tab with their CPU,
+  # memory and busiest processes. This server fetches /v8/management/server/system from each
+  # with its management key, so the key never reaches the browser. See docs/management-api-v8.md (Devices).
+  # devices:
+  #   - name: "jacks-desktop"
+  #     url: "http://jacks-desktop.taila5e4cd.ts.net" # the other machine's Tailscale Serve URL
+  #     management-key: "the other machine's management secret-key, in plain text"
+
+  # Groups for this machine's own programs on the Devices tab, ahead of the built in ones
+  # (Claude Code, Tailscale, vendor apps, drivers, Windows). A process joins a group when its
+  # name, program path or command line contains any "match" (any case); the shells and
+  # helpers it starts join with it. Command lines are read only for node, python, shells
+  # and the like. kind: work (the default), app, remote, removable, driver or system.
+  # process-groups:
+  #   - name: "Grad jobs scraper"
+  #     description: "Finds graduate jobs and saves them."
+  #     match: ["grad-jobs"]
+  #   - name: "CLI proxy"
+  #     description: "This proxy and the script that starts it."
+  #     match: ["cliproxy"]
+  #   - name: "WhisperX transcription"
+  #     description: "Turns voice memos into text on the graphics card."
+  #     match: ["whisperx"]
+  #   - name: "Bank sync"
+  #     description: "Pulls in bank transactions."
+  #     match: ["bank-sync"]
+
 # Client authentication for the proxy API. These are not upstream provider keys.
 access:
   # API keys for authentication
@@ -1206,6 +1233,19 @@ plugins:
       config-list: ["a", "b"]
       config-object:
         mode: "safe"
+
+# Voice-memo transcription. Uploads (Transcripts tab, or /v8/management/transcriptions)
+# queue one job at a time; each job runs: command args... -InputPath <audio> -OutDir <job folder>
+# [-Speakers N] [-Language xx]. On exit 0 the folder must hold transcript.json, .srt and .txt;
+# otherwise error.txt says why. Jobs live in dir (empty: "transcriptions" next to this file).
+# Changes apply without a restart. Off by default.
+# transcription:
+#   enabled: false
+#   command: "powershell"
+#   args: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "C:\\Users\\User\\whisperx\\transcribe.ps1"]
+#   dir: ""
+#   max-upload-mb: 500
+#   timeout: "2h"
 
 # Legacy compatibility reference (comments only; not part of this v8 template).
 # Old files and /v0/management still work without a v8 write. Existing legacy-only

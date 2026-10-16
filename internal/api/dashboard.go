@@ -109,6 +109,18 @@ func (s *Server) serveDashboardData(c *gin.Context) {
 	gzipWriterPool.Put(zw)
 }
 
+// serveDashboardDevices returns the Devices tab's readings: this host's and
+// each configured device's, under the read-only dashboard's access rule.
+func (s *Server) serveDashboardDevices(c *gin.Context) {
+	if s.mgmt == nil {
+		c.AbortWithStatus(http.StatusNotFound)
+		return
+	}
+	if s.dashboardViewsAllowed(c) {
+		s.mgmt.GetDashboardDevices(c)
+	}
+}
+
 var gzipWriterPool = sync.Pool{New: func() any { return gzip.NewWriter(io.Discard) }}
 
 // acceptsGzip reports whether an Accept-Encoding header allows gzip.

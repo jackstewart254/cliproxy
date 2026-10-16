@@ -89,6 +89,7 @@ retain the corresponding business operation's fields.
 | --- | --- | --- |
 | `/config/upstream/<provider>` | GET, PUT, PATCH, DELETE | Manage shared provider settings. |
 | `/server/latest-version` | GET | Get latest release information. |
+| `/server/system` | GET | Read the load on this proxy's host: CPU (total, per core), load average (not on Windows), memory, swap, disks, process and thread counts, the 15 busiest processes by CPU and by memory, headroom (idle CPU, free memory), and, when the host has the tools, `gpus` (NVIDIA, from `nvidia-smi`) and `temps` (macOS CPU and GPU from `smctemp`, plus each NVIDIA card); both are left out otherwise and refresh every 5 s. CPU percentages cover the time since the previous reading, or a fresh 250 ms sample when that is over 10 s old; calls within 1 s share a reading. |
 | `/requests/api-call` | POST | Make an authenticated upstream call. |
 | `/routing/cooldown/reset` | POST | Clear credential cooldown. |
 | `/routing/model-definitions/<channel>` | GET | Get model definitions. |
@@ -115,6 +116,81 @@ retain the corresponding business operation's fields.
 | `/plugins/store` | GET | List the plugin store. |
 | `/plugins/store/<id>/install` | POST | Install or update a plugin. |
 | `/plugins/<id>/quota` | GET, POST, DELETE | Read, fetch, or reset plugin quota. |
+| `/transcriptions` | GET, POST | List transcription jobs, or upload a voice memo; see [Transcriptions](#transcriptions). |
+| `/transcriptions/<id>` | GET, DELETE | Read a job (with its transcript once done), or delete it. |
+| `/transcriptions/<id>/<format>` | GET | Download a done job's transcript: `txt`, `srt` or `json`. |
+
+## Transcriptions
+
+Voice memos become speaker-labelled transcripts through the wrapper command in
+the `transcription` config section. The routes answer 404 while
+`transcription.enabled` is false. Jobs run one at a time, oldest first.
+
+- `POST /transcriptions` takes `multipart/form-data`: `file` (required; m4a, mp3,
+  wav, ogg, opus, webm, mp4, aac or flac, a plain file name, at most
+  `max-upload-mb`, default 500), `speakers` (optional, 1 to 20) and `language`
+  (optional two- or three-letter code). It answers `202 {"id": "<id>"}`; 400 for
+  a refused form, 413 for a file over the limit.
+- `GET /transcriptions` answers `{"jobs": [...]}`, newest first. Each job is its
+  `meta.json`: `id`, `name`, `size`, `created`, `status` (`queued`, `running`,
+  `done` or `failed`), `started`, `finished`, `speakers`, `language` and `error`.
+- `GET /transcriptions/<id>` answers the job, plus `progress` (the wrapper's
+  latest stdout line) while it runs and `transcript` (the wrapper's
+  `transcript.json`) once it is done.
+- `GET /transcriptions/<id>/<format>` downloads `txt`, `srt` or `json` as an
+  attachment named after the memo; 404 until the job is done.
+- `DELETE /transcriptions/<id>` removes the job's folder; 409 while it runs.
+
+Each job is a folder `<dir>/<id>/` holding `audio.<ext>`, `meta.json`,
+`stdout.log` and the wrapper's outputs. On start, `queued` jobs queue again and
+`running` jobs fail with the error `interrupted`. A job that outlives
+`timeout` (default `2h`), or is running at shutdown, is killed with its child
+processes. The dashboard's Transcripts tab uses the same routes under
+`/dashboard/transcriptions` without a key, from this host only.
+
+### Devices
+
+The dashboard's Devices tab shows this host and each machine listed under
+`management.devices`. This server fetches each device's `/server/system` itself,
+so a device's management key never reaches the browser. On macOS, processes owned
+by other users are missing from the process lists without root.
+
+GPUs and temperatures come from tools the machine already has, read every
+5 seconds within 200 ms; a missing or slow tool leaves its part out:
+- NVIDIA cards (load, memory, temperature, power) from `nvidia-smi`.
+- macOS CPU and GPU temperatures from `smctemp` (Homebrew
+  `narugit/tap/smctemp`; no root needed).
+- Windows CPU temperature is not shown. Windows exposes no reliable Ryzen
+  temperature without a driver such as LibreHardwareMonitor, which is not
+  installed.
+
+Each reading also sorts the machine's processes into groups (`groups`): the
+machine's own `management.process-groups` first, then built in groups for
+Claude Code, Tailscale and SSH, common vendor apps, drivers and the system. A
+process no group claims joins its parent's group, so a job's shells and
+helpers count toward the job. Program paths and parents are read once per
+process; command lines only for scripted programs (node, python, shells).
+The dashboard turns the reading into one plain verdict per machine.
+
+Machines reach each other
+over Tailscale only, with no SSH tunnels: the device's proxy stays bound to
+127.0.0.1 and is published to the tailnet with Tailscale Serve (never Funnel),
+for example `tailscale serve --bg --http=80 http://127.0.0.1:8317`. A device's
+`url` is that Serve URL and `management-key` is its management `secret-key` in
+plain text:
+
+```yaml
+management:
+  devices:
+    - name: "jacks-desktop"
+      url: "http://jacks-desktop.taila5e4cd.ts.net"
+      management-key: "<the PC's management secret-key>"
+```
+
+Serve connects to the device's proxy from 127.0.0.1, so `allow-remote` can stay
+`false` there, and failed key attempts count toward that device's loopback ban
+(5 failures, 30 minutes). A device that answers 401 is not asked again until this
+proxy's config reloads.
 
 ## OAuth
 

@@ -636,6 +636,7 @@ const P = {
   more: "M6.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM12.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM18.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Z",
   check: "m4.5 12.75 6 6 9-13.5",
   calendar: "M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 0 1 2.25-2.25h13.5A2.25 2.25 0 0 1 21 7.5v11.25m-18 0A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75m-18 0v-7.5A2.25 2.25 0 0 1 5.25 9h13.5A2.25 2.25 0 0 1 21 11.25v7.5",
+  microphone: "M12 18.75a6 6 0 0 0 6-6v-1.5m-6 7.5a6 6 0 0 1-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 0 1-3-3V4.5a3 3 0 1 1 6 0v8.25a3 3 0 0 1-3 3Z",
   search: "m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z",
   adjust: "M10.5 6h9.75M10.5 6a1.5 1.5 0 1 1-3 0m3 0a1.5 1.5 0 1 0-3 0M3.75 6H7.5m3 12h9.75m-9.75 0a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m-3.75 0H7.5m9-6h3.75m-3.75 0a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m-9.75 0h9.75",
   copy: "M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 0 1-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 0 1 1.5.124m7.5 10.376h3.375c.621 0 1.125-.504 1.125-1.125V11.25c0-4.46-3.243-8.161-7.5-8.876a9.06 9.06 0 0 0-1.5-.124H9.375c-.621 0-1.125.504-1.125 1.125v3.5m7.5 10.375H9.375a1.125 1.125 0 0 1-1.125-1.125v-9.25m12 6.625v-1.875a3.375 3.375 0 0 0-3.375-3.375h-1.5a1.125 1.125 0 0 1-1.125-1.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H9.75",
@@ -945,7 +946,7 @@ export function seg(items, active, attr, cls = "") {
   return `<div class="seg ${cls}">${items.map((t) => `<button class="${t.id === active ? "on" : ""}" ${attr}="${esc(t.id)}">${esc(t.label)}</button>`).join("")}</div>`;
 }
 
-// cols: [{label, w (px) or grow, r (right aligned), cls}]; rows: [{cells: [html], href, cls, attrs}]
+// cols: [{label, head (html in place of label), w (px) or grow, r (right aligned), cls}]; rows: [{cells: [html], href, cls, attrs}]
 export function table(cols, rows, opts = {}) {
   const cell = (c, html, i) => {
     // opts.fit lets sized columns shrink to c.min (default 70%) instead of scrolling sideways.
@@ -954,7 +955,7 @@ export function table(cols, rows, opts = {}) {
       : `style="width:${c.w}px;flex:0 0 ${c.w}px"`;
     return `<div class="c ${c.w ? "" : "g"} ${c.r ? "r" : ""} ${c.cls || ""}" ${style}>${html ?? ""}</div>`;
   };
-  const head = opts.noHead ? "" : `<div class="tr head">${cols.map((c, i) => cell(c, esc(c.label || ""), i)).join("")}</div>`;
+  const head = opts.noHead ? "" : `<div class="tr head">${cols.map((c, i) => cell(c, c.head ?? esc(c.label || ""), i)).join("")}</div>`;
   const body = rows.map((r) => {
     if (r.group) return `<div class="tr group ${r.cls || ""}">${r.html}</div>`;
     const tag = r.href ? "a" : "div";

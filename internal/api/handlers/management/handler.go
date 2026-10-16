@@ -61,6 +61,11 @@ type Handler struct {
 	pluginStoreHTTPClient   pluginstore.HTTPDoer
 	pluginStoreRateLimiter  *pluginstore.GitHubRateLimiter
 	pluginReleases          pluginReleaseCache
+	// refusedDeviceKeys holds url+key pairs a device answered 401 to. Asking
+	// again would get this host banned there after five tries, which through
+	// Tailscale Serve is the device's own loopback address. Cleared on config
+	// reload.
+	refusedDeviceKeys sync.Map
 }
 
 type configReloadSnapshot struct {
@@ -129,6 +134,7 @@ func (h *Handler) SetConfig(cfg *config.Config) {
 	h.mu.Lock()
 	h.cfg = cfg
 	h.mu.Unlock()
+	h.refusedDeviceKeys.Clear()
 }
 
 // SetAuthManager updates the auth manager reference used by management endpoints.
