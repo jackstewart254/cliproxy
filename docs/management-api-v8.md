@@ -116,6 +116,37 @@ retain the corresponding business operation's fields.
 | `/plugins/store` | GET | List the plugin store. |
 | `/plugins/store/<id>/install` | POST | Install or update a plugin. |
 | `/plugins/<id>/quota` | GET, POST, DELETE | Read, fetch, or reset plugin quota. |
+| `/transcriptions` | GET, POST | List transcription jobs, or upload a voice memo; see [Transcriptions](#transcriptions). |
+| `/transcriptions/<id>` | GET, DELETE | Read a job (with its transcript once done), or delete it. |
+| `/transcriptions/<id>/<format>` | GET | Download a done job's transcript: `txt`, `srt` or `json`. |
+
+## Transcriptions
+
+Voice memos become speaker-labelled transcripts through the wrapper command in
+the `transcription` config section. The routes answer 404 while
+`transcription.enabled` is false. Jobs run one at a time, oldest first.
+
+- `POST /transcriptions` takes `multipart/form-data`: `file` (required; m4a, mp3,
+  wav, ogg, opus, webm, mp4, aac or flac, a plain file name, at most
+  `max-upload-mb`, default 500), `speakers` (optional, 1 to 20) and `language`
+  (optional two- or three-letter code). It answers `202 {"id": "<id>"}`; 400 for
+  a refused form, 413 for a file over the limit.
+- `GET /transcriptions` answers `{"jobs": [...]}`, newest first. Each job is its
+  `meta.json`: `id`, `name`, `size`, `created`, `status` (`queued`, `running`,
+  `done` or `failed`), `started`, `finished`, `speakers`, `language` and `error`.
+- `GET /transcriptions/<id>` answers the job, plus `progress` (the wrapper's
+  latest stdout line) while it runs and `transcript` (the wrapper's
+  `transcript.json`) once it is done.
+- `GET /transcriptions/<id>/<format>` downloads `txt`, `srt` or `json` as an
+  attachment named after the memo; 404 until the job is done.
+- `DELETE /transcriptions/<id>` removes the job's folder; 409 while it runs.
+
+Each job is a folder `<dir>/<id>/` holding `audio.<ext>`, `meta.json`,
+`stdout.log` and the wrapper's outputs. On start, `queued` jobs queue again and
+`running` jobs fail with the error `interrupted`. A job that outlives
+`timeout` (default `2h`), or is running at shutdown, is killed with its child
+processes. The dashboard's Transcripts tab uses the same routes under
+`/dashboard/transcriptions` without a key, from this host only.
 
 ### Devices
 

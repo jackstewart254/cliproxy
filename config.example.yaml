@@ -1220,6 +1220,19 @@ plugins:
       config-object:
         mode: "safe"
 
+# Voice-memo transcription. Uploads (Transcripts tab, or /v8/management/transcriptions)
+# queue one job at a time; each job runs: command args... -InputPath <audio> -OutDir <job folder>
+# [-Speakers N] [-Language xx]. On exit 0 the folder must hold transcript.json, .srt and .txt;
+# otherwise error.txt says why. Jobs live in dir (empty: "transcriptions" next to this file).
+# Changes apply without a restart. Off by default.
+# transcription:
+#   enabled: false
+#   command: "powershell"
+#   args: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "C:\\Users\\User\\whisperx\\transcribe.ps1"]
+#   dir: ""
+#   max-upload-mb: 500
+#   timeout: "2h"
+
 # Legacy compatibility reference (comments only; not part of this v8 template).
 # Old files and /v0/management still work without a v8 write. Existing legacy-only
 # fields remain in their old locations until a successful v8 configuration write.
