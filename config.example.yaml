@@ -78,6 +78,8 @@ management:
   # Reloads without a restart. Management API calls through Serve need no entry:
   # they arrive from 127.0.0.1, so they count as local (key still required,
   # allow-remote not needed) as long as trusted-proxies does not list loopback.
+  # Failed management keys through Serve also count against 127.0.0.1, so 5 bad
+  # keys from the tailnet ban local management clients on this machine for 30 min.
   # dashboard-allowed-hosts:
   #   - my-pc.example-tailnet.ts.net
   #   - my-pc
