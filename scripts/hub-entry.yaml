@@ -1,0 +1,24 @@
+# The pc-hub group that scripts/hub-enable.sh keeps under api-keys.claude in a
+# Mac proxy config. Lines starting with "#" are not copied. The Go test
+# TestHubEntryForwardsSessionID loads this file, so the two cannot drift.
+#
+# priority 100: used before the Mac's own logins (the rank picker gives them
+#   small numbers). The session header is copied from the caller, so the hub
+#   keeps each Mac session on one PC account even for Desktop sessions, which
+#   the proxy does not treat as native Claude Code.
+# status 0: an explicit 0 matches failures with no HTTP status (PC offline,
+#   refused, reset) and cools the hub for that model.
+# health-check: GET {base-url}/healthz every 12s; two failures block the hub
+#   for all models and move bound sessions to a local login.
+    - name: pc-hub
+      base-url: "__HUB_URL__"
+      priority: 100
+      headers:
+        X-Claude-Code-Session-Id: "$X-Claude-Code-Session-Id"
+      request-scoped-errors:
+        - status: 0
+          match: ["dial tcp", "connection reset", "EOF"]
+          action: "continue-and-cooldown"
+      keys:
+        - api-key: "__HUB_KEY__"
+          health-check: true
