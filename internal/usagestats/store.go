@@ -72,7 +72,8 @@ type Session struct {
 	ParentID string `json:"parent_id"`
 	Provider string `json:"provider"`
 	// Title and Machine come from POST /dashboard/sessions; Machine falls back
-	// to this host's name for a loopback client. Both are filled in by Summary.
+	// to the device named in the client key (see deviceFromClientKey), then to
+	// this host's name for a loopback client. Both are filled in by Summary.
 	Title         string                `json:"title"`
 	Machine       string                `json:"machine"`
 	Model         string                `json:"model"`
@@ -82,9 +83,10 @@ type Session struct {
 	FirstSeen     time.Time             `json:"first_seen"`
 	LastSeen      time.Time             `json:"last_seen"`
 	TTFTP50       int64                 `json:"ttft_ms_p50"`
-	// ClientIP and TTFTHist are kept in the stats file and left out of
+	// ClientIP, Device and TTFTHist are kept in the stats file and left out of
 	// Summary. ServedAt is when the request that set ServingAuthID started.
 	ClientIP string    `json:"client_ip,omitempty"`
+	Device   string    `json:"device,omitempty"`
 	TTFTHist histogram `json:"ttft_hist,omitempty"`
 	ServedAt time.Time `json:"served_at,omitzero"`
 	Counters
@@ -202,6 +204,27 @@ func localMachineName(ip string) string {
 		return HostName()
 	}
 	return ""
+}
+
+// deviceFromClientKey is the device a client key was issued to, or "". Keys
+// that scripts/pc/hub-add-device.ps1 issues read "dev.<device>.<secret>", so a
+// hub can name the Mac behind each request although Tailscale Serve makes every
+// one arrive from loopback. Only the name is kept, never the key.
+func deviceFromClientKey(key string) string {
+	rest, ok := strings.CutPrefix(strings.TrimSpace(key), "dev.")
+	if !ok {
+		return ""
+	}
+	name, secret, ok := strings.Cut(rest, ".")
+	if !ok || secret == "" || name == "" || len(name) > maxMachineLength {
+		return ""
+	}
+	for _, r := range name {
+		if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '-' {
+			return ""
+		}
+	}
+	return strings.Clone(name)
 }
 
 // HostName is this host's short name, or "" when the OS does not say.
@@ -367,6 +390,9 @@ func (s *Store) recordFrom(record coreusage.Record, clientIP string) {
 			}
 			if clientIP != "" {
 				session.ClientIP = clientIP
+			}
+			if device := deviceFromClientKey(record.APIKey); device != "" {
+				session.Device = device
 			}
 			session.LastSeen = at
 		}
@@ -682,6 +708,7 @@ func (s *Store) sessionViewLocked(session *Session) Session {
 	view.TTFTP50 = roundMillis(session.TTFTHist.percentile(0.5, ttftBase))
 	view.TTFTHist = nil
 	view.ClientIP = ""
+	view.Device = ""
 	base, agent := splitSessionID(session.ID)
 	if meta := s.meta[base]; meta != nil {
 		view.Machine = meta.Machine
@@ -689,6 +716,9 @@ func (s *Store) sessionViewLocked(session *Session) Session {
 		if !agent {
 			view.Title = meta.Title
 		}
+	}
+	if view.Machine == "" {
+		view.Machine = session.Device
 	}
 	if view.Machine == "" && session.ClientIP != "" && s.machineName != nil {
 		view.Machine = s.machineName(session.ClientIP)
