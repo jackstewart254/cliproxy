@@ -246,3 +246,46 @@ func TestSetHealthBlockEndsCutStreamWithError(t *testing.T) {
 		t.Fatalf("cut stream not recorded as a failure: %+v", hook.Results())
 	}
 }
+
+// With session affinity off the scheduler picks, and a health block is a
+// cooldown that ends at HealthBlockedUntil: when the checker stops (no probe
+// lifts the block), the hub comes back on its own once the block expires.
+func TestHealthBlockExpiresOnSchedulerPath(t *testing.T) {
+	ctx := context.Background()
+	m := NewManager(nil, nil, nil)
+	m.SetSelector(&FillFirstSelector{})
+	const provider, model = "health-expiry", "health-expiry-model"
+	m.RegisterExecutor(schedulerTestExecutor{provider: provider})
+	hubID, localID := "health-expiry-hub", "health-expiry-local"
+	for id, attrs := range map[string]map[string]string{
+		hubID:   {"priority": "100", "health_check": "true"},
+		localID: {"priority": "1"},
+	} {
+		if _, err := m.Register(WithSkipPersist(ctx), &Auth{ID: id, Provider: provider, Status: StatusActive, Attributes: attrs}); err != nil {
+			t.Fatalf("register %s: %v", id, err)
+		}
+		registry.GetGlobalRegistry().RegisterClient(id, provider, []*registry.ModelInfo{{ID: model}})
+		t.Cleanup(func() { registry.GetGlobalRegistry().UnregisterClient(id) })
+	}
+	pick := func() string {
+		t.Helper()
+		auth, _, err := m.pickNext(ctx, provider, model, cliproxyexecutor.Options{}, nil)
+		if err != nil {
+			t.Fatalf("pickNext: %v", err)
+		}
+		return auth.ID
+	}
+
+	if got := pick(); got != hubID {
+		t.Fatalf("before the block picked %q, want the hub", got)
+	}
+	until := time.Now().Add(150 * time.Millisecond)
+	m.SetHealthBlock(hubID, until)
+	if got := pick(); got != localID {
+		t.Fatalf("during the block picked %q, want %q", got, localID)
+	}
+	time.Sleep(time.Until(until) + 50*time.Millisecond)
+	if got := pick(); got != hubID {
+		t.Fatalf("after the block expired picked %q, want the hub back", got)
+	}
+}

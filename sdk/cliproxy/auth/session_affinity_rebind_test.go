@@ -233,10 +233,11 @@ func TestSessionAffinityFallbackAliasByRebindMode(t *testing.T) {
 	}
 }
 
-// A session bound to a health-checked hub moves to a local credential once the
-// health check blocks the hub, and stays there after the hub answers again: in
-// quota mode it must not stay pinned to a dead hub.
-func TestSessionAffinityRebindOnQuotaMovesOffHealthBlockedHub(t *testing.T) {
+// A session bound to a health-checked hub is served by a local login per request
+// while the hub is health blocked (fill-first keeps it on the same one), keeps
+// its hub binding, and goes back to the hub as soon as the block lifts, so the
+// hub's account ranking governs it again.
+func TestSessionAffinityHealthBlockedHubServesLocallyThenReturns(t *testing.T) {
 	for session, sessionOpts := range rebindTestSessions {
 		t.Run(session, func(t *testing.T) {
 			ctx := context.Background()
@@ -246,10 +247,11 @@ func TestSessionAffinityRebindOnQuotaMovesOffHealthBlockedHub(t *testing.T) {
 			t.Cleanup(affinity.Stop)
 			manager.SetSelector(affinity)
 			manager.RegisterExecutor(schedulerTestExecutor{provider: provider})
-			hubID, localID := provider+"-hub", provider+"-local"
+			hubID, localID, spareID := provider+"-hub", provider+"-local", provider+"-spare"
 			for id, attrs := range map[string]map[string]string{
 				hubID:   {"priority": "100", "health_check": "true"},
-				localID: {"priority": "1"},
+				localID: {"priority": "2"},
+				spareID: {"priority": "1"},
 			} {
 				if _, errRegister := manager.Register(WithSkipPersist(ctx), &Auth{ID: id, Provider: provider, Status: StatusActive, Attributes: attrs}); errRegister != nil {
 					t.Fatalf("Register(%s): %v", id, errRegister)
@@ -270,12 +272,14 @@ func TestSessionAffinityRebindOnQuotaMovesOffHealthBlockedHub(t *testing.T) {
 				t.Fatalf("cold binding = %q, want the hub %q", got, hubID)
 			}
 			manager.SetHealthBlock(hubID, time.Now().Add(time.Minute))
-			if got := pick(2); got != localID {
-				t.Fatalf("pick while the hub is health blocked = %q, want %q", got, localID)
+			for turn := 2; turn <= 3; turn++ {
+				if got := pick(turn); got != localID {
+					t.Fatalf("turn %d while the hub is health blocked = %q, want %q", turn, got, localID)
+				}
 			}
 			manager.SetHealthBlock(hubID, time.Time{})
-			if got := pick(3); got != localID {
-				t.Fatalf("pick after the hub recovered = %q, want the rebound %q", got, localID)
+			if got := pick(4); got != hubID {
+				t.Fatalf("turn after the block lifted = %q, want back on the hub %q", got, hubID)
 			}
 		})
 	}

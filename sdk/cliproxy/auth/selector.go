@@ -825,7 +825,7 @@ func isAuthBlockedForModel(auth *Auth, model string, now time.Time) (bool, block
 	if auth == nil {
 		return true, blockReasonOther, time.Time{}
 	}
-	if auth.Disabled || auth.Status == StatusDisabled || auth.HealthBlockedUntil.After(now) {
+	if auth.Disabled || auth.Status == StatusDisabled {
 		return true, blockReasonDisabled, time.Time{}
 	}
 	if hasUnauthorizedAuthFailure(auth) {
@@ -1142,8 +1142,8 @@ const lcpBoundAuthIDMetadataKey = "lcp_bound_auth_id"
 type sessionAuthLookupKey struct{}
 
 // rebindAllowed reports whether a session bound to authID may move to another credential.
-// With RebindOnQuota only an account-wide quota limit, a disabled credential, a removed
-// one, or an endpoint that failed its health check moves it.
+// With RebindOnQuota only an account-wide quota limit, a disabled credential, or a removed
+// one moves it.
 func (s *SessionAffinitySelector) rebindAllowed(ctx context.Context, authID string, now time.Time) bool {
 	if !s.rebindOnQuota || ctx == nil {
 		return true
@@ -1153,7 +1153,7 @@ func (s *SessionAffinitySelector) rebindAllowed(ctx context.Context, authID stri
 		return true
 	}
 	auth, ok := lookup(authID)
-	if !ok || auth == nil || auth.Disabled || auth.Status == StatusDisabled || auth.HealthBlockedUntil.After(now) {
+	if !ok || auth == nil || auth.Disabled || auth.Status == StatusDisabled {
 		return true
 	}
 	return auth.Quota.Exceeded && auth.Quota.Reason == "credential_quota" && auth.Quota.NextRecoverAt.After(now)

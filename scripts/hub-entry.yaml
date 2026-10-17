@@ -9,7 +9,7 @@
 # status 0: an explicit 0 matches failures with no HTTP status (PC offline,
 #   refused, reset) and cools the hub for that model.
 # health-check: GET {base-url}/healthz every 12s; two failures block the hub
-#   for all models and move bound sessions to a local login.
+#   for all models; bound sessions are served locally and return after.
     - name: pc-hub
       base-url: "__HUB_URL__"
       priority: 100
