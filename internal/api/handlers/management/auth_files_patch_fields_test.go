@@ -17,6 +17,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	fileauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/auth"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
+	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 )
 
 func TestSyncAuthFilePriorityAttributeTracksFileSource(t *testing.T) {
@@ -899,6 +900,48 @@ func TestRerankPriorities(t *testing.T) {
 	for _, tc := range cases {
 		if got := rerankPriorities(tc.list, tc.id, tc.rank); !maps.Equal(got, tc.want) {
 			t.Errorf("%s: got %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+// The PC hub is a config API-key credential at priority 100. Ranking the Claude
+// logins never touches it, and whatever ranks they get it stays first.
+func TestRankingLoginsKeepsHubFirst(t *testing.T) {
+	t.Setenv("MANAGEMENT_PASSWORD", "")
+	manager := coreauth.NewManager(&memoryAuthStore{}, nil, nil)
+	ctx := context.Background()
+	hub := &coreauth.Auth{ID: "claude:apikey:hub", Provider: "claude", Status: coreauth.StatusActive,
+		Attributes: map[string]string{"priority": "100", "health_check": "true", "base_url": "http://hub.invalid", "source": "config:claude[hub]"}}
+	if _, errRegister := manager.Register(ctx, hub); errRegister != nil {
+		t.Fatalf("register hub: %v", errRegister)
+	}
+	logins := []string{"a.json", "b.json", "c.json"}
+	for _, name := range logins {
+		login := &coreauth.Auth{ID: name, FileName: name, Provider: "claude", Status: coreauth.StatusActive,
+			Attributes: map[string]string{"path": "/tmp/" + name}, Metadata: map[string]any{"type": "claude"}}
+		if _, errRegister := manager.Register(ctx, login); errRegister != nil {
+			t.Fatalf("register %s: %v", name, errRegister)
+		}
+	}
+	h := NewHandlerWithoutConfigFilePath(&config.Config{AuthDir: t.TempDir()}, manager)
+
+	for _, name := range logins {
+		for rank := 1; rank <= len(logins); rank++ {
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPatch, "/v8/management/credentials/rank", strings.NewReader(fmt.Sprintf(`{"name":%q,"rank":%d}`, name, rank)))
+			c.Request.Header.Set("Content-Type", "application/json")
+			h.PatchAuthFileRank(c)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("rank %s to %d: status %d, body %s", name, rank, rec.Code, rec.Body.String())
+			}
+			if got, _ := manager.GetByID(hub.ID); got.Attributes["priority"] != "100" {
+				t.Fatalf("ranking %s to %d changed the hub priority to %q", name, rank, got.Attributes["priority"])
+			}
+			picked, errPick := (&coreauth.FillFirstSelector{}).Pick(ctx, "claude", "claude-opus-5-5", cliproxyexecutor.Options{}, manager.List())
+			if errPick != nil || picked == nil || picked.ID != hub.ID {
+				t.Fatalf("after ranking %s to %d the selector picked %v (%v), want the hub", name, rank, picked, errPick)
+			}
 		}
 	}
 }

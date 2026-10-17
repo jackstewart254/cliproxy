@@ -262,3 +262,32 @@ func TestSessionFieldsFollowTheLatestRequest(t *testing.T) {
 	reloaded.recordFrom(coreusage.Record{AuthID: "claude-a", SessionID: "claude:s1", RequestedAt: older.Add(2 * time.Second)}, "")
 	check(reloaded, "claude-fable-5-1", latest)
 }
+
+// Every hub request arrives over Tailscale Serve from loopback, so the client
+// key's device names the session's machine instead of the hub itself. The key
+// is never stored, and a key without a device keeps the loopback fallback.
+func TestSessionMachineFromDeviceClientKey(t *testing.T) {
+	clock := &testClock{now: time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)}
+	store := newClockStore(clock)
+	store.machineName = func(string) string { return "jacks-desktop" }
+	at := clock.now.Add(-time.Minute)
+	for id, key := range map[string]string{
+		"claude:air":   "dev.macbook-air.0123456789abcdef0123456789abcdef",
+		"claude:local": "plain-client-key",
+		"claude:bad":   "dev.Not_A_Name.0123456789abcdef",
+	} {
+		store.recordFrom(coreusage.Record{AuthID: "claude-a", SessionID: id, APIKey: key, RequestedAt: at}, "127.0.0.1")
+	}
+	sessions := sessionsByID(store.Summary(10))
+	for id, want := range map[string]string{"claude:air": "macbook-air", "claude:local": "jacks-desktop", "claude:bad": "jacks-desktop"} {
+		if got := sessions[id].Machine; got != want {
+			t.Errorf("%s machine = %q, want %q", id, got, want)
+		}
+		if sessions[id].Device != "" {
+			t.Errorf("%s summary leaks device field %q", id, sessions[id].Device)
+		}
+	}
+	if got := store.sessions["claude:air"].Device; got != "macbook-air" {
+		t.Fatalf("stored device = %q, want macbook-air", got)
+	}
+}

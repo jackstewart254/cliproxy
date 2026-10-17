@@ -173,7 +173,7 @@ func (cfg *Config) SanitizeOAuthRequestScopedErrors() {
 					matchRegexr = append(matchRegexr, tre)
 				}
 			}
-			if r.Status <= 0 || (len(match) == 0 && len(matchRegexr) == 0) || action == "" {
+			if (r.Status <= 0 && r.Status != StatusNoHTTP) || (len(match) == 0 && len(matchRegexr) == 0) || action == "" {
 				continue
 			}
 			clean = append(clean, RequestScopedErrorRule{

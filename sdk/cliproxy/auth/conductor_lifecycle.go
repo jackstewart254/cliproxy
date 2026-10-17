@@ -220,6 +220,8 @@ func (m *Manager) updateInternal(ctx context.Context, base, auth *Auth, mode upd
 	auth.Success = existing.Success
 	auth.Failed = existing.Failed
 	auth.recentRequests = existing.recentRequests
+	// Runtime-only, owned by the health check; a config reload must not lift it.
+	auth.HealthBlockedUntil = existing.HealthBlockedUntil
 	if auth.Generation <= existing.Generation {
 		auth.Generation = existing.Generation + 1
 	} else {

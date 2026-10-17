@@ -521,7 +521,7 @@ upstream:
 #       disable-cooling: false # optional override: true disables cooling, false enables it; omit to inherit global
 #       request-retry: 3 # optional per-auth override; 0 disables additional rounds; omit or set < 0 to inherit global
 #       request-scoped-errors: # optional: custom rules to classify upstream errors by status and body patterns
-#         - status: 400        # HTTP status code to match
+#         - status: 400        # HTTP status code to match; an explicit 0 matches failures with no HTTP status (connection refused, dial timeout, DNS, reset), an omitted status matches nothing
 #           match:             # optional: string contains matching
 #             - "maximum_context_length"
 #             - "context_length_exceeded"
@@ -725,6 +725,7 @@ upstream:
 #       keys:
 #         - api-key: "sk-atSM..."
 #           weight: 5 # optional: weighted-round-robin share; omitted defaults to 1; maximum 1,000,000
+#           health-check: true # optional, per key, needs the group base-url: poll GET {base-url}/healthz every 12s (3s timeout); two failures in a row take this credential out of rotation for all models within 27s and cancel its in-flight attempts, until it answers again
 #           rebuild-mid-system-message: false # optional: default is false; when true, move messages with role "system" into the top-level Claude system field
 #           cloak:                         # optional: explicitly enable request cloaking for non-Claude-Code clients
 #             mode: "auto"                 # "auto" (default inside this block): cloak only when client is not Claude Code

@@ -524,7 +524,7 @@ func (m *Manager) executeMixedOnce(ctx context.Context, providers []string, req 
 		publishSelectedAuthMetadata(opts.Metadata, auth)
 
 		tried[auth.ID] = struct{}{}
-		execCtx := ctx
+		execCtx := m.trackHealthAttempt(ctx, auth)
 		if rt := m.roundTripperFor(auth); rt != nil {
 			execCtx = context.WithValue(execCtx, roundTripperContextKey{}, rt)
 			execCtx = context.WithValue(execCtx, "cliproxy.roundtripper", rt)
@@ -599,6 +599,12 @@ func (m *Manager) executeMixedOnce(ctx context.Context, providers []string, req 
 				if hasUpstreamExecutionAttempt(errExec) {
 					upstreamErr = errExec
 				}
+				if healthAborted(execCtx) && ctx.Err() == nil {
+					// The health check took this credential out mid-attempt:
+					// try the next credential in the same request.
+					authErr = ErrHealthBlocked
+					break
+				}
 				if errCtx := execCtx.Err(); errCtx != nil {
 					return cliproxyexecutor.Response{}, errCtx
 				}
@@ -617,6 +623,10 @@ func (m *Manager) executeMixedOnce(ctx context.Context, providers []string, req 
 							upstreamErr = errExec
 						}
 						warnLogUpstreamFailure(execCtx, entry, provider, upstreamModel, auth, durationRetry, errExec)
+						if healthAborted(execCtx) && ctx.Err() == nil {
+							authErr = ErrHealthBlocked
+							break
+						}
 						if errCtx := execCtx.Err(); errCtx != nil {
 							return cliproxyexecutor.Response{}, errCtx
 						}
@@ -736,7 +746,7 @@ func (m *Manager) executeCountMixedOnce(ctx context.Context, providers []string,
 		publishSelectedAuthMetadata(opts.Metadata, auth)
 
 		tried[auth.ID] = struct{}{}
-		execCtx := ctx
+		execCtx := m.trackHealthAttempt(ctx, auth)
 		if rt := m.roundTripperFor(auth); rt != nil {
 			execCtx = context.WithValue(execCtx, roundTripperContextKey{}, rt)
 			execCtx = context.WithValue(execCtx, "cliproxy.roundtripper", rt)
@@ -811,6 +821,12 @@ func (m *Manager) executeCountMixedOnce(ctx context.Context, providers []string,
 				if hasUpstreamExecutionAttempt(errExec) {
 					upstreamErr = errExec
 				}
+				if healthAborted(execCtx) && ctx.Err() == nil {
+					// The health check took this credential out mid-attempt:
+					// try the next credential in the same request.
+					authErr = ErrHealthBlocked
+					break
+				}
 				if errCtx := execCtx.Err(); errCtx != nil {
 					return cliproxyexecutor.Response{}, errCtx
 				}
@@ -829,6 +845,10 @@ func (m *Manager) executeCountMixedOnce(ctx context.Context, providers []string,
 							upstreamErr = errExec
 						}
 						warnLogUpstreamFailure(execCtx, entry, provider, upstreamModel, auth, durationRetry, errExec)
+						if healthAborted(execCtx) && ctx.Err() == nil {
+							authErr = ErrHealthBlocked
+							break
+						}
 						if errCtx := execCtx.Err(); errCtx != nil {
 							return cliproxyexecutor.Response{}, errCtx
 						}
@@ -1043,11 +1063,11 @@ func (m *Manager) executeStreamMixedOnce(ctx context.Context, providers []string
 		publishSelectedAuthMetadata(opts.Metadata, auth)
 
 		tried[auth.ID] = struct{}{}
-		execCtx := ctx
+		execCtx := m.trackHealthAttempt(ctx, auth)
 		releaseAttempt := func() {}
 		if selection != nil {
 			var errBind error
-			execCtx, releaseAttempt, errBind = homeExecutionAttemptContext(ctx, selection)
+			execCtx, releaseAttempt, errBind = homeExecutionAttemptContext(execCtx, selection)
 			if errBind != nil {
 				selection.End("attempt_bind_failed")
 				return nil, errBind
@@ -1192,6 +1212,9 @@ func (m *Manager) executeStreamMixedOnce(ctx context.Context, providers []string
 				if errEnd := m.endHomeSelectionBeforeRedispatch(ctx, selection, "stream_start_failed"); errEnd != nil {
 					return nil, errEnd
 				}
+			}
+			if healthAborted(execCtx) && ctx != nil && ctx.Err() == nil {
+				errStream = ErrHealthBlocked
 			}
 			if errCtx := execCtx.Err(); errCtx != nil && ctx != nil && ctx.Err() != nil {
 				return nil, errCtx

@@ -384,6 +384,13 @@ func isKnownDefaultValue(path []string, node *yaml.Node) bool {
 		return false
 	}
 
+	// A request-scoped error rule's explicit `status: 0` matches failures with no
+	// HTTP status; an omitted status is never rendered, so a rendered 0 is explicit.
+	// Rules sit under request-scoped-errors or oauth-request-scoped-errors.<provider>.
+	if len(path) > 1 && path[len(path)-1] == "status" && (path[len(path)-2] == "request-scoped-errors" || len(path) == 3 && path[0] == "oauth-request-scoped-errors") && node != nil && node.Kind == yaml.ScalarNode && node.Tag == "!!int" {
+		return false
+	}
+
 	// Pointer-backed booleans (such as cache-user-id and disable-cooling): explicit false is meaningful and must be preserved.
 	if len(path) > 0 && (path[len(path)-1] == "cache-user-id" || path[len(path)-1] == "disable-cooling") && node != nil && node.Kind == yaml.ScalarNode && node.Tag == "!!bool" {
 		return false
