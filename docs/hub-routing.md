@@ -21,8 +21,11 @@ Claude Code on a Mac  (Foundry env in ~/.claude/settings.json, unchanged)
   through as well.
 - Health check: `GET /healthz` every 12 s, 3 s timeout. Two failures block the hub
   for all models within 27 s, cancel its in flight requests (they fail over in the
-  same request) and move sessions bound to it onto a local login. Those sessions
-  stay local after the hub recovers; new sessions go to the hub.
+  same request). While blocked, each request of a session bound to the hub is
+  served by a local login (fill first keeps it on one) and the binding stays on
+  the hub, so the session returns to the hub, and the PC ranking, as soon as
+  the block lifts. The block is a cooldown that ends by itself about 27 s after
+  the last failed probe, so a stopped checker never strands the hub.
 - Unreachable hub: a connect failure matches the `status: 0` rule and cools the
   hub for that model for 60 s; the health check then blocks it for all models.
 - Never add a Mac as an upstream on the PC. That makes a loop.
@@ -54,7 +57,16 @@ at group level. An omitted `status` matches nothing; the explicit 0 is required.
 
 ## Deploy order
 
-PC key, then Mac binary, then Mac config. Do one Mac at a time.
+PC binary (optional), then PC key, then Mac binary, then Mac config. Do one Mac
+at a time.
+
+0. **PC binary (optional).** Only device naming in the PC dashboard needs the PC
+   proxy built from this change; routing, keys and failover work with the PC's
+   current build. Build it with `GOOS=windows GOARCH=amd64 go build -o
+   cliproxy-dash.exe ./cmd/server`, copy it to the PC, keep the running exe as
+   `cliproxy-dash.prev.exe`, swap, restart the `CLIProxy` task (stop the exe by
+   PID; `Stop-ScheduledTask` alone leaves it running) and expect `/healthz` 200
+   through Serve.
 
 1. **PC key.** Copy the script over (`scp scripts/pc/hub-add-device.ps1
    jacks-desktop:cliproxy/`), then on the PC (owner run, or `ssh -t jacks-desktop`):
@@ -72,6 +84,7 @@ PC key, then Mac binary, then Mac config. Do one Mac at a time.
    `C:\Users\User\cliproxy\hub-keys\<d>.key`. A setup that Taildrops the file
    deletes it afterwards. `-Revoke -Apply` removes the key from the config and
    deletes `hub-keys\<d>.key`. `-Config` and `-KeyDir` override the defaults.
+   It refuses any path inside `%USERPROFILE%\.cli-proxy-api`, which holds the logins.
    The PC proxy reloads client keys by itself (watcher, then
    `access.ApplyAccessProviders`); no restart. Device names: `macbook-pro-3`, `macbook-air`.
 
@@ -110,6 +123,9 @@ PC key, then Mac binary, then Mac config. Do one Mac at a time.
   `cp -p "$(ls -t ~/.cli-proxy-api/config.yaml.bak-hub-* | head -1)" ~/.cli-proxy-api/config.yaml`
 - **Mac binary:** copy the `.prev` binary over the live one (copy, then rename)
   and kickstart. The hub group is safe on the old binary, so either order works.
+- **PC binary:** copy `cliproxy-dash.prev.exe` back over `cliproxy-dash.exe` and
+  restart the `CLIProxy` task the same way. Hub sessions then show the PC's host
+  name again; keys and routing are unaffected.
 - **One Mac's access** (hot reload on the PC):
   `hub-add-device.ps1 -Device macbook-air -Revoke -Apply`, which also deletes
   `hub-keys\macbook-air.key`. That Mac gets 401 from the hub, cools it for

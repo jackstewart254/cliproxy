@@ -13,7 +13,8 @@
   one step; the proxy reloads client keys by itself, no restart.
   -Revoke removes the device's key from the config and deletes
   <KeyDir>\<device>.key. Never prints a key. Windows PowerShell 5.1.
-  -Config and -KeyDir override the defaults. See docs/hub-routing.md.
+  -Config and -KeyDir override the defaults. Refuses any path inside
+  $env:USERPROFILE\.cli-proxy-api, which holds the logins. See docs/hub-routing.md.
 
 .EXAMPLE
   powershell -NoProfile -ExecutionPolicy Bypass -File hub-add-device.ps1 -Device macbook-air
@@ -43,16 +44,26 @@ function Restrict([string]$path, [string]$grant) {
     & icacls $path /inheritance:r /grant:r "$($env:USERNAME):$grant" | Out-Null
     return ($LASTEXITCODE -eq 0)
 }
+# Full path; .NET resolves relative paths against its own working directory,
+# not PowerShell's, and GetFullPath folds any "..".
+function FullPath([string]$p) { return [System.IO.Path]::GetFullPath($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($p)) }
 
 if ($Revoke -and $OutFile) { Fail '-OutFile only applies when adding a key; nothing written' }
-if (-not (Test-Path -LiteralPath $Config -PathType Leaf)) { Fail "config $Config not found; nothing written" }
-# .NET resolves relative paths against its own working directory, not PowerShell's.
-$Config = (Resolve-Path -LiteralPath $Config).ProviderPath
-$KeyDir = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($KeyDir)
+$Config = FullPath $Config
+$KeyDir = FullPath $KeyDir
 $keyFile = Join-Path $KeyDir "$Device.key"
 $target = $keyFile
+if ($OutFile) { $target = FullPath $OutFile }
+# The proxy's .cli-proxy-api dir holds the logins: this script never goes there.
+$authHome = [System.IO.Path]::GetFullPath($env:USERPROFILE + '\.cli-proxy-api').TrimEnd('\')
+foreach ($p in @($Config, $KeyDir, $target)) {
+    $q = $p.TrimEnd('\')
+    if ($q -ieq $authHome -or $q.StartsWith($authHome + '\', [StringComparison]::OrdinalIgnoreCase)) {
+        Fail "$p is inside $authHome, which holds the logins; pick another path; nothing written"
+    }
+}
+if (-not (Test-Path -LiteralPath $Config -PathType Leaf)) { Fail "config $Config not found; nothing written" }
 if ($OutFile) {
-    $target = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutFile)
     $parentDir = [System.IO.Path]::GetDirectoryName($target)
     if (-not $parentDir -or -not (Test-Path -LiteralPath $parentDir -PathType Container)) { Fail "the folder for -OutFile $target does not exist; nothing written" }
     if (Test-Path -LiteralPath $target) { Fail "-OutFile $target already exists; remove it or pick another path; nothing written" }
