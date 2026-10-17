@@ -72,10 +72,15 @@ func shouldEnableExampleAPIKeySafeMode(cfg *config.Config, commandMode, tuiMode,
 // service based on the provided flags (login, codex-login, or server mode).
 func main() {
 	// check-config <file> loads a config the way the server does, then exits:
-	// 0 with "check-config: ok", or 1. It reads nothing else (no auth dir, no
-	// plugins), but may rewrite the file it loads, so callers pass a copy.
+	// 0 with "check-config: ok", or 1; 2 with usage for a wrong argument count,
+	// never a server start. It reads nothing else (no auth dir, no plugins),
+	// but may rewrite the file it loads, so callers pass a copy.
 	// scripts/hub-enable.sh runs it before swapping a config in.
-	if len(os.Args) == 3 && os.Args[1] == "check-config" {
+	if len(os.Args) > 1 && os.Args[1] == "check-config" {
+		if len(os.Args) != 3 {
+			fmt.Fprintln(os.Stderr, "usage: cliproxy-dash check-config <config.yaml>")
+			os.Exit(2)
+		}
 		if _, errLoad := config.LoadConfig(os.Args[2]); errLoad != nil {
 			fmt.Fprintf(os.Stderr, "check-config: %v\n", errLoad)
 			os.Exit(1)

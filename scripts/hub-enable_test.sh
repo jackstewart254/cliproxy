@@ -148,9 +148,9 @@ check "legacy layout refused" '[[ $rc != 0 && $out == *"not a config-version 8"*
 printf 'config-version: 8\napi-keys:\n- "x"\n' >"$cfg"; cp "$cfg" "$tmp/c8.orig"
 run "$cfg" --key-file "$tmp/key1" --apply
 check "list api-keys refused" '[[ $rc != 0 && $out == *"refused"* ]] && cmp -s "$cfg" "$tmp/c8.orig"'
-printf 'config-version: 8\napi-keys:\n  claude: []\n' >"$cfg"; cp "$cfg" "$tmp/c8.orig"
+printf 'config-version: 8\napi-keys:\n  claude: [{name: x}]\n' >"$cfg"; cp "$cfg" "$tmp/c8.orig"
 run "$cfg" --key-file "$tmp/key1" --apply
-check "flow list refused" '[[ $rc != 0 && $out == *"refused"* ]] && cmp -s "$cfg" "$tmp/c8.orig"'
+check "non-empty flow list refused, exit 3" '[[ $rc == 3 && $out == *"refused"* ]] && cmp -s "$cfg" "$tmp/c8.orig"'
 cp "$tmp/mac.yaml" "$cfg"
 run "$cfg" --key-file "$tmp/badkey" --apply
 check "bad key refused" '[[ $rc != 0 && $out == *"unexpected characters"* && $out != *quote* ]] && cmp -s "$cfg" "$tmp/mac.yaml"'
@@ -318,6 +318,44 @@ if [[ -x $proxy ]]; then
   check "check reports the proxy loads it" '[[ $out == *"the proxy loads"* ]]'
   check "validator leaves the checked file alone" '[[ $(cat "$tmp/c10.yaml") == "$before" ]]'
 fi
+
+# 16. A dashboard Claude key edit renames every group claude-N. The hub group
+# is found by base-url: current for --check, renamed back in place on apply.
+renamed_hub=${saved_hub_block/name: pc-hub/name: claude-1}
+cfg="$tmp/c16.yaml"
+{ echo "config-version: 8"; printf '%s\n' "${renamed_hub//__KEY1__/$key1}"; printf '        - name: claude-2\n          base-url: "http://other.invalid"\n          keys:\n            - api-key: "other-placeholder"\n'; } >"$cfg"
+cp "$cfg" "$tmp/c16.orig"
+run "$cfg" --key-file "$tmp/key1" --check
+check "renamed: check sees it current" '[[ $out == *"entry present and current"* && $out == *"would rename claude-1 back to pc-hub"* ]] && cmp -s "$cfg" "$tmp/c16.orig"'
+run "$cfg" --key-file "$tmp/key1" --apply
+check "renamed: apply restores the name" '[[ $rc == 0 && $out == *"rename claude-1 back to pc-hub"* ]] && ones "$cfg" && ! grep -q "name: claude-1" "$cfg"'
+check "renamed: one key, other group kept" '[[ $(grep -c "$key1" "$cfg") == 1 ]] && grep -q "other-placeholder" "$cfg"'
+run "$cfg" --key-file "$tmp/key1" --apply
+check "renamed: rerun up to date, loads" '[[ $out == *"up to date"* ]] && loads "$cfg"'
+cp "$tmp/c16.orig" "$cfg"
+run "$cfg" --key-file "$tmp/key2" --apply
+check "renamed then rotated: updated in place" '[[ $rc == 0 && $out == *"update pc-hub"* ]] && ones "$cfg" && grep -q "$key2" "$cfg" && ! grep -q "$key1" "$cfg"'
+check "renamed then rotated: loads" 'loads "$cfg"'
+
+# 17. Two hub groups (by name or base-url) are refused with exit 3.
+cfg="$tmp/c17.yaml"
+{ cat "$tmp/c16.orig"; printf '%s\n' "${saved_hub_block//__KEY1__/$key2}" | tail -n +3; } >"$cfg"; cp "$cfg" "$tmp/c17.orig"
+run "$cfg" --key-file "$tmp/key2" --apply
+check "renamed plus pc-hub refused" '[[ $rc == 3 && $out == *"pc-hub twice"* && $out != *"$key1"* && $out != *"$key2"* ]] && cmp -s "$cfg" "$tmp/c17.orig"'
+run "$cfg" --key-file "$tmp/key2" --check
+check "check refuses two hub groups" '[[ $rc == 3 ]]'
+sed 's/name: pc-hub/name: claude-3/' "$tmp/c17.orig" >"$cfg"; cp "$cfg" "$tmp/c17.orig"
+run "$cfg" --key-file "$tmp/key2" --apply
+check "two renamed hub groups refused" '[[ $rc == 3 && $out == *"twice"* ]] && cmp -s "$cfg" "$tmp/c17.orig"'
+
+# 18. Deleting every Claude key on the dashboard writes "claude: []".
+cfg="$tmp/c18.yaml"
+printf 'config-version: 8\napi-keys:\n    claude: [] # emptied\n    codex:\n        - name: cx\n          keys:\n            - api-key: "cx-placeholder"\nrouting:\n    strategy: fill-first\n' >"$cfg"
+run "$cfg" --key-file "$tmp/key1" --apply
+check "empty list: filled" '[[ $rc == 0 && $out == *"fill the empty api-keys.claude"* ]] && grep -q "^    claude: # emptied$" "$cfg" && grep -q "^        - name: pc-hub$" "$cfg"'
+check "empty list: codex kept" '[[ $(grep -n "name: pc-hub" "$cfg" | cut -d: -f1) -lt $(grep -n "^    codex:" "$cfg" | cut -d: -f1) ]] && grep -q "cx-placeholder" "$cfg"'
+run "$cfg" --key-file "$tmp/key1" --apply
+check "empty list: rerun up to date, loads" '[[ $out == *"up to date"* ]] && ones "$cfg" && loads "$cfg"'
 
 echo "hub-enable_test: $pass passed, $fail failed"
 ((fail == 0))

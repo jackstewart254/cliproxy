@@ -16,7 +16,7 @@ usage: hub-enable.sh [--apply] [--check] --key-file <path>
   --check    report whether the group is current, the config loads and the
              hub /healthz answers; exits 1 unless all hold
   A config the proxy binary (when it has check-config) cannot load is never
-  swapped in.
+  swapped in. A layout it will not edit (two hub groups, say) exits 3.
 EOF
 }
 
@@ -74,8 +74,10 @@ render "<from $key_file>" >"$work/group.masked"
 # and one line to actionfile: "current" (nothing to change), what it changed,
 # or "refused: why" with exit 3 and no output. Indents follow the file: the
 # proxy's own saves write 4 spaces, hand edits often 2. The template's dash
-# column (4) moves to the file's. A second api-keys, a second claude under it
-# or a second pc-hub is refused, so a broken file is never built on.
+# column (4) moves to the file's. The hub group is the item named pc-hub or
+# with base-url --hub-url: a dashboard edit renames every group claude-N, and
+# the name goes back on the next run. A second api-keys, a second claude under
+# it or a second hub group is refused, so a broken file is never built on.
 merge_prog='
   function ind(s) { match(s, /^ */); return RLENGTH }
   function skip(s) { return s ~ /^[[:space:]]*(#.*)?$/ }
@@ -129,6 +131,22 @@ merge_prog='
     }
     cnt[s] += sign
   }
+  # "key: value" when s is a field of a claude item whose dash is at D, else ""
+  function own(s) {
+    if (ind(s) == D && s ~ /^ *- +/) sub(/^ *- +/, "", s)
+    else if (ind(s) == D + 2 && s !~ /^ *-/) sub(/^ +/, "", s)
+    else return ""
+    return s
+  }
+  # unquoted value of the item field k on s, or ""
+  function val(s, k) {
+    s = own(s)
+    if (index(s, k ":") != 1) return ""
+    s = substr(s, length(k) + 2)
+    sub(/[[:space:]]+#.*$/, "", s)
+    gsub(/^[[:space:]"\047]+|[[:space:]"\047]+$/, "", s)
+    return s
+  }
   function refuse(why) { print "refused: " why > actionfile; exit 3 }
   function done(what) { print what > actionfile; exit 0 }
   BEGIN { while ((getline l < groupfile) > 0) group[++gn] = l; close(groupfile) }
@@ -170,38 +188,47 @@ merge_prog='
       print_lines(at, n)
       done("add claude with pc-hub under api-keys at line " at)
     }
+    # a dashboard save that deletes every Claude key writes "claude: []"
+    if (line[c] ~ /^ *claude:[[:space:]]*\[[[:space:]]*\][[:space:]]*(#.*)?$/) {
+      l = line[c]
+      sub(/:[[:space:]]*\[[[:space:]]*\]/, ":", l)
+      print_lines(1, c - 1)
+      print l
+      emit_group(2 * C)
+      print_lines(c + 1, n)
+      done("fill the empty api-keys.claude list with pc-hub at line " c)
+    }
     if (line[c] !~ /^ *claude:[[:space:]]*(#.*)?$/) refuse("api-keys.claude is not a block list")
     ce = next_at(c + 1, C)
     for (i = c + 1; i < ce; i++) if (!skip(line[i])) { first = i; break }
     if (!first || line[first] !~ /^ *- /) refuse("api-keys.claude is not an indented block list")
     D = ind(line[first])
-    # pc-hub is the item whose own name field (first or later key) says so
     for (i = c + 1; i < ce; i++) {
       if (skip(line[i])) continue
       if (ind(line[i]) < D) refuse("api-keys.claude items are not evenly indented")
-      if (line[i] !~ /^ *(- +)?name:[[:space:]]*["\047]?pc-hub["\047]?[[:space:]]*(#.*)?$/) continue
-      st = 0
-      if (line[i] ~ /^ *- / && ind(line[i]) == D) st = i
-      else if (line[i] ~ /^ *name:/ && ind(line[i]) == D + 2) {
-        for (j = i - 1; j > c; j--) if (line[j] ~ /^ *- / && ind(line[j]) == D) { st = j; break }
-        if (!st) refuse("cannot find the list item holding name: pc-hub")
-      } else continue
-      if (s) refuse("api-keys.claude has pc-hub twice")
+      if (ind(line[i]) == D && line[i] ~ /^ *- /) st = i
+      u = val(line[i], "base-url")
+      sub(/\/+$/, "", u)
+      if (val(line[i], "name") != "pc-hub" && u != hub) continue
+      if (s && s != st) refuse("api-keys.claude has pc-hub twice (named pc-hub or base-url " hub ")")
       s = st
     }
     if (s) {
       e = trim_end(next_at(s + 1, D), s)
-      for (i = s; i < e; i++) canon(line[i], 1)
-      for (k = 1; k <= gn; k++) canon(group[k], -1)
+      # the name aside, so a group a save renamed counts as current content
+      was = ""
+      for (i = s; i < e; i++) if (own(line[i]) ~ /^name:/) was = val(line[i], "name"); else canon(line[i], 1)
+      for (k = 1; k <= gn; k++) if (group[k] !~ /^ *- name: pc-hub$/) canon(group[k], -1)
       same = 1
       for (t in cnt) if (cnt[t] != 0) same = 0
-      if (same) {
+      if (same && was == "pc-hub") {
         print_lines(1, n)
         done("current")
       }
       print_lines(1, s - 1)
       emit_group(D)
       print_lines(e, n)
+      if (same) done("rename " was " back to pc-hub at lines " s "-" (e - 1))
       done("update pc-hub at lines " s "-" (e - 1))
     }
     at = trim_end(ce, c)
@@ -213,7 +240,7 @@ merge_prog='
 '
 
 # merge <in> <out> <actionfile>: exit 0 merged, 3 refused
-merge() { awk -v groupfile="$work/group" -v actionfile="$3" "$merge_prog" <"$1" >"$2"; }
+merge() { awk -v groupfile="$work/group" -v actionfile="$3" -v hub="$hub_url" "$merge_prog" <"$1" >"$2"; }
 
 # The proxy binary loads a config the way the server does when it has the
 # check-config command (look for its marker; an older binary would start a
@@ -233,7 +260,7 @@ loads() {
 status=0
 merge "$config" "$work/new" "$work/action" || status=$?
 action=$(cat "$work/action" 2>/dev/null || true)
-((status == 0)) || die "${action:-could not read $config}; nothing written"
+((status == 0)) || { echo "hub-enable: ${action:-could not read $config}; nothing written" >&2; exit "$status"; }
 
 if [[ $action == current ]]; then
   echo "pc-hub in $config is up to date"
@@ -266,6 +293,8 @@ else
     sed 's/^/  | /' "$work/group.masked"
     echo "run again with --apply to write it"
     current=0
+    # Renamed by a dashboard save, otherwise current: it still routes.
+    [[ $action != rename* ]] || current=1
   fi
 fi
 

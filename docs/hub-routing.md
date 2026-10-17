@@ -115,7 +115,11 @@ at a time.
    ```
 
    The script follows the file's indent (dashboard saves write 4 spaces, hand
-   edits often 2) and refuses a second `api-keys`, `claude` or `pc-hub`. Before
+   edits often 2). The hub group is the one named `pc-hub` or with the hub
+   `base-url`: a dashboard Claude key edit renames every group `claude-N`, a
+   rerun puts the name back, and `--check` counts a renamed group as current.
+   It fills the `claude: []` a dashboard leaves after deleting every key, and
+   refuses (exit 3) a second `api-keys`, `claude` or hub group. Before
    any write it runs `cliproxy-dash check-config` (from step 3; `--proxy-bin`
    overrides the path) on a copy and refuses a config the proxy cannot load.
    An older binary has no `check-config`; then only the layout is checked.

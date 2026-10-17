@@ -86,10 +86,15 @@ if ($parent -lt 0) { Fail "no $(if ($v8) { 'access.api-keys' } else { 'api-keys'
 $list = $parent
 if ($v8) {
     $list = -1
+    # access's children sit at its first child's indent: 2 by hand, 4 after a
+    # dashboard save.
+    $accessIndent = -1
     for ($i = $parent + 1; $i -lt $lines.Count; $i++) {
         if (IsSkip $lines[$i]) { continue }
-        if ((Indent $lines[$i]) -eq 0) { break }
-        if ($lines[$i] -match '^  api-keys:\s*(#.*)?$') { $list = $i; break }
+        $lineIndent = Indent $lines[$i]
+        if ($lineIndent -eq 0) { break }
+        if ($accessIndent -lt 0) { $accessIndent = $lineIndent }
+        if ($lineIndent -eq $accessIndent -and $lines[$i] -match '^\s*api-keys:\s*(#.*)?$') { $list = $i; break }
     }
     if ($list -lt 0) { Fail "access has no block list api-keys in $Config; nothing written" }
 }
