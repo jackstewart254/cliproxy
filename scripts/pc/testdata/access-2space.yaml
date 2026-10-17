@@ -1,0 +1,15 @@
+# Fake keys only. Fixtures for scripts/pc/hub-add-device.ps1: access-2space.yaml
+# is a hand edited config; access-4space.yaml is it after one dashboard save
+# (SaveConfigPreserveComments), which indents by 4.
+config-version: 8
+server:
+  host: 127.0.0.1
+  port: 8317
+access:
+  api-keys:
+    # client keys
+    - "client-key-placeholder"
+    - "dev.example-mac.0000000000000000000000000000000000000000000000000000000000000000"
+routing:
+  strategy: fill-first
+  session-affinity: true
