@@ -41,10 +41,11 @@ routing:
 # trailing comment
 EOF
 
+proxy="$tmp/no-proxy" # no validator unless a case sets one; never the live binary
 run() { # config, extra args...; sets out and rc
   local cfg=$1; shift
   rc=0
-  out=$("$script" --config "$cfg" --hub-url http://127.0.0.1:9 "$@" 2>&1) || rc=$?
+  out=$("$script" --config "$cfg" --hub-url http://127.0.0.1:9 --proxy-bin "$proxy" "$@" 2>&1) || rc=$?
 }
 backups() { ls "$1".bak-hub-* 2>/dev/null | wc -l | tr -d ' '; }
 hubs() { grep -c 'name: pc-hub' "$1" || true; }
@@ -178,14 +179,144 @@ if command -v python3 >/dev/null; then
   server_pid=$!
   for _ in 1 2 3 4 5 6 7 8 9 10; do curl -s -o /dev/null "http://127.0.0.1:$port/healthz" && break; sleep 0.3; done
   rc=0
-  out=$("$script" --config "$tmp/c7.yaml" --hub-url "http://127.0.0.1:$port" --key-file "$tmp/key1" --check 2>&1) || rc=$?
+  out=$("$script" --config "$tmp/c7.yaml" --hub-url "http://127.0.0.1:$port" --proxy-bin "$proxy" --key-file "$tmp/key1" --check 2>&1) || rc=$?
   check "check passes on a live hub" '[[ $rc == 1 && $out == *"answered 200"* ]]' # c7 has 127.0.0.1:9, so the entry is out of date
-  "$script" --config "$tmp/c7.yaml" --hub-url "http://127.0.0.1:$port" --key-file "$tmp/key1" --apply >/dev/null
+  "$script" --config "$tmp/c7.yaml" --hub-url "http://127.0.0.1:$port" --proxy-bin "$proxy" --key-file "$tmp/key1" --apply >/dev/null
   rc=0
-  out=$("$script" --config "$tmp/c7.yaml" --hub-url "http://127.0.0.1:$port" --key-file "$tmp/key1" --check 2>&1) || rc=$?
+  out=$("$script" --config "$tmp/c7.yaml" --hub-url "http://127.0.0.1:$port" --proxy-bin "$proxy" --key-file "$tmp/key1" --check 2>&1) || rc=$?
   check "check exits 0 when entry and hub are good" '[[ $rc == 0 ]]'
 else
   echo "skip: python3 missing, live hub check not run"
+fi
+
+# The proxy's own saves (SaveConfigPreserveComments) indent by 4 spaces. The
+# fixtures below were captured from that save path on 2026-10-17 and trimmed;
+# internal/config TestHubEnableOnManagementSavedConfig runs the live path.
+ones() { # file: top-level api-keys, claude lists, pc-hub groups (all must be 1)
+  [[ $(grep -c '^api-keys:' "$1") == 1 && $(grep -cE '^ +claude:' "$1") == 1 && $(hubs "$1") == 1 ]]
+}
+loads() { [[ ! -x $proxy ]] || { cp "$1" "$tmp/load.yaml" && "$proxy" check-config "$tmp/load.yaml" >/dev/null 2>&1; }; }
+repo="$(cd "$(dirname "$script")/.." && pwd)"
+if command -v go >/dev/null && (cd "$repo" && go build -o "$tmp/proxy" ./cmd/server) >/dev/null 2>&1; then
+  proxy="$tmp/proxy"
+else
+  echo "skip: go build failed or go missing, check-config cases use the layout check only"
+fi
+
+cat >"$tmp/saved.yaml" <<'EOF'
+config-version: 8
+upstream:
+    codex: {}
+routing:
+    strategy: fill-first
+    session-affinity: true
+    session-affinity-rebind-on: quota
+    cooldown:
+        disable-cooling: false
+# trailing comment
+
+access:
+    api-keys:
+        - "client-key-placeholder"
+# Server
+server:
+    host: 127.0.0.1
+    port: 8317
+    discovery:
+        subtypes:
+            - _messages
+oauth:
+    providers:
+        aistudio:
+            ws-auth: true
+EOF
+saved_hub_block=$(cat <<'EOF'
+api-keys:
+    claude:
+        - name: pc-hub
+          base-url: "http://127.0.0.1:9"
+          priority: 100
+          headers:
+            X-Claude-Code-Session-Id: "$X-Claude-Code-Session-Id"
+          request-scoped-errors:
+            - status: 0
+              match:
+                - "dial tcp"
+                - "connection reset"
+                - "EOF"
+              action: "continue-and-cooldown"
+          keys:
+            - api-key: "__KEY1__"
+              health-check: true
+EOF
+)
+
+# 10. A saved 4 space config without upstream keys: a 4 space block, then current.
+cfg="$tmp/c10.yaml"; cp "$tmp/saved.yaml" "$cfg"
+run "$cfg" --key-file "$tmp/key1" --apply
+check "saved: apply exits 0" '[[ $rc == 0 && $out == *"append api-keys.claude"* ]]'
+check "saved: block at 4 spaces" 'grep -q "^    claude:$" "$cfg" && grep -q "^        - name: pc-hub$" "$cfg" && grep -q "^              health-check: true$" "$cfg"'
+run "$cfg" --key-file "$tmp/key1" --apply
+check "saved: rerun up to date" '[[ $rc == 0 && $out == *"up to date"* && $(backups "$cfg") == 1 ]]'
+check "saved: one of each, loads" 'ones "$cfg" && loads "$cfg"'
+
+# 11. The group as a save rewrites it (block match list, 4 spaces) is current.
+cfg="$tmp/c11.yaml"
+{ head -n 14 "$tmp/saved.yaml"; printf '%s\n' "${saved_hub_block//__KEY1__/$key1}"; tail -n +15 "$tmp/saved.yaml"; } >"$cfg"
+cp "$cfg" "$tmp/c11.orig"
+run "$cfg" --key-file "$tmp/key1" --apply
+check "saved hub: same key up to date" '[[ $rc == 0 && $out == *"up to date"* ]] && cmp -s "$cfg" "$tmp/c11.orig" && [[ $(backups "$cfg") == 0 ]]'
+run "$cfg" --key-file "$tmp/key1" --check
+check "saved hub: check sees it current" '[[ $out == *"entry present and current"* ]]'
+run "$cfg" --key-file "$tmp/key2" --apply
+check "saved hub: new key updates in place" '[[ $rc == 0 && $out == *"update pc-hub"* ]] && ones "$cfg" && grep -q "$key2" "$cfg" && ! grep -q "$key1" "$cfg"'
+check "saved hub: update at 8 space dash" 'grep -q "^        - name: pc-hub$" "$cfg"'
+run "$cfg" --key-file "$tmp/key2" --apply
+check "saved hub: rerun up to date, loads" '[[ $out == *"up to date"* ]] && loads "$cfg"'
+
+# 12. Hand written 4 space file with api-keys but no claude.
+cfg="$tmp/c12.yaml"
+printf 'config-version: 8\napi-keys:\n    codex:\n        - name: cx\n          keys:\n            - api-key: "cx-placeholder"\nrouting:\n    strategy: fill-first\n' >"$cfg"
+run "$cfg" --key-file "$tmp/key1" --apply
+check "4 space no claude: adds claude at 4" '[[ $rc == 0 && $out == *"add claude with pc-hub"* ]] && grep -q "^    claude:$" "$cfg" && grep -q "^        - name: pc-hub$" "$cfg"'
+check "4 space no claude: before routing, codex kept" '[[ $(grep -n "^    claude:" "$cfg" | cut -d: -f1) -lt $(grep -n "^routing:" "$cfg" | cut -d: -f1) ]] && grep -q "cx-placeholder" "$cfg"'
+run "$cfg" --key-file "$tmp/key1" --apply
+check "4 space no claude: rerun up to date, loads" '[[ $out == *"up to date"* ]] && ones "$cfg" && loads "$cfg"'
+
+# 13. Hand written 4 space file with a claude list: pc-hub joins it.
+cfg="$tmp/c13.yaml"
+printf 'config-version: 8\napi-keys:\n    claude:\n        - name: other\n          keys:\n            - api-key: "other-placeholder"\n    codex:\n        - name: cx\n          keys:\n            - api-key: "cx-placeholder"\n' >"$cfg"
+run "$cfg" --key-file "$tmp/key1" --apply
+check "4 space claude list: pc-hub added at 8" '[[ $rc == 0 && $out == *"add pc-hub to api-keys.claude"* ]] && grep -q "^        - name: pc-hub$" "$cfg"'
+check "4 space claude list: before codex" '[[ $(grep -n "name: pc-hub" "$cfg" | cut -d: -f1) -lt $(grep -n "^    codex:" "$cfg" | cut -d: -f1) ]]'
+run "$cfg" --key-file "$tmp/key1" --apply
+check "4 space claude list: rerun up to date, loads" '[[ $out == *"up to date"* ]] && ones "$cfg" && loads "$cfg"'
+
+# 14. The broken file the old script wrote (a second claude) is refused.
+cfg="$tmp/c14.yaml"
+{ cat "$tmp/c13.yaml"; printf '  claude:\n    - name: pc-hub\n'; } >"$cfg"; cp "$cfg" "$tmp/c14.orig"
+run "$cfg" --key-file "$tmp/key1" --apply
+check "duplicate claude refused" '[[ $rc != 0 && $out == *"refused"* ]] && cmp -s "$cfg" "$tmp/c14.orig"'
+run "$cfg" --key-file "$tmp/key1" --check
+check "check fails on a duplicate claude" '[[ $rc != 0 && $out == *"refused"* ]]'
+printf 'config-version: 8\napi-keys:\n    claude:\n        - name: a\napi-keys:\n    codex:\n        - name: b\n' >"$cfg"; cp "$cfg" "$tmp/c14.orig"
+run "$cfg" --key-file "$tmp/key1" --apply
+check "duplicate api-keys refused" '[[ $rc != 0 && $out == *"twice"* ]] && cmp -s "$cfg" "$tmp/c14.orig"'
+printf 'config-version: 8\napi-keys:\n    claude:\n        - name: pc-hub\n        - name: pc-hub\n' >"$cfg"; cp "$cfg" "$tmp/c14.orig"
+run "$cfg" --key-file "$tmp/key1" --apply
+check "duplicate pc-hub refused" '[[ $rc != 0 && $out == *"pc-hub twice"* ]] && cmp -s "$cfg" "$tmp/c14.orig"'
+
+# 15. With check-config, a merge the proxy cannot load is never swapped in.
+if [[ -x $proxy ]]; then
+  cfg="$tmp/c15.yaml"
+  printf 'config-version: 8\nrouting:\n  session-affinity: not-a-bool\n' >"$cfg"; cp "$cfg" "$tmp/c15.orig"
+  run "$cfg" --key-file "$tmp/key1" --apply
+  check "validator refuses an unloadable merge" '[[ $rc != 0 && $out == *"proxy cannot load"* ]] && cmp -s "$cfg" "$tmp/c15.orig" && [[ $(backups "$cfg") == 0 ]]'
+  check "validator message hides the key" '[[ $out != *"$key1"* ]]'
+  before=$(cat "$tmp/c10.yaml")
+  run "$tmp/c10.yaml" --key-file "$tmp/key1" --check
+  check "check reports the proxy loads it" '[[ $out == *"the proxy loads"* ]]'
+  check "validator leaves the checked file alone" '[[ $(cat "$tmp/c10.yaml") == "$before" ]]'
 fi
 
 echo "hub-enable_test: $pass passed, $fail failed"

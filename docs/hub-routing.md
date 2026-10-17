@@ -110,10 +110,15 @@ at a time.
    ```sh
    scripts/hub-enable.sh --key-file ~/.cli-proxy-api/hub.key            # dry run, shows the group with the key masked
    scripts/hub-enable.sh --key-file ~/.cli-proxy-api/hub.key --apply    # backup config.yaml.bak-hub-<stamp>, then write
-   scripts/hub-enable.sh --key-file ~/.cli-proxy-api/hub.key --check    # exit 0: entry current and /healthz 200
+   scripts/hub-enable.sh --key-file ~/.cli-proxy-api/hub.key --check    # exit 0: entry current, config loads, /healthz 200
    grep -E 'claude-api-key count|config successfully reloaded' ~/Library/Logs/cliproxy-dash.log | tail -2
    ```
 
+   The script follows the file's indent (dashboard saves write 4 spaces, hand
+   edits often 2) and refuses a second `api-keys`, `claude` or `pc-hub`. Before
+   any write it runs `cliproxy-dash check-config` (from step 3; `--proxy-bin`
+   overrides the path) on a copy and refuses a config the proxy cannot load.
+   An older binary has no `check-config`; then only the layout is checked.
    The proxy reloads the config by itself. A new chat then logs `new binding`
    with `auth=claude:apikey:...`. Chats open before the change stay on their login.
 
