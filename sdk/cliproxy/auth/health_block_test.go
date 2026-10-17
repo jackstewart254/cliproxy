@@ -279,13 +279,42 @@ func TestHealthBlockExpiresOnSchedulerPath(t *testing.T) {
 	if got := pick(); got != hubID {
 		t.Fatalf("before the block picked %q, want the hub", got)
 	}
-	until := time.Now().Add(150 * time.Millisecond)
-	m.SetHealthBlock(hubID, until)
+	m.SetHealthBlock(hubID, time.Now().Add(time.Minute))
 	if got := pick(); got != localID {
 		t.Fatalf("during the block picked %q, want %q", got, localID)
 	}
-	time.Sleep(time.Until(until) + 50*time.Millisecond)
+	expireHealthBlock(m, hubID)
 	if got := pick(); got != hubID {
 		t.Fatalf("after the block expired picked %q, want the hub back", got)
+	}
+}
+
+// expireHealthBlock moves an auth's health block, and every retry time the
+// scheduler derived from it, into the past, as if the block ran out with no
+// probe lifting it. A block the scheduler holds with no retry time keeps none,
+// so it stays blocked: that is the case the test above guards against.
+func expireHealthBlock(m *Manager, id string) {
+	past := time.Now().Add(-time.Second)
+	m.mu.Lock()
+	m.auths[id].HealthBlockedUntil = past
+	m.mu.Unlock()
+	m.scheduler.mu.Lock()
+	defer m.scheduler.mu.Unlock()
+	for _, provider := range m.scheduler.providers {
+		if meta := provider.auths[id]; meta != nil && meta.auth != nil {
+			meta.auth.HealthBlockedUntil = past
+		}
+		for _, shard := range provider.modelShards {
+			entry := shard.entries[id]
+			if entry == nil {
+				continue
+			}
+			if entry.auth != nil {
+				entry.auth.HealthBlockedUntil = past
+			}
+			if !entry.nextRetryAt.IsZero() {
+				entry.nextRetryAt = past
+			}
+		}
 	}
 }

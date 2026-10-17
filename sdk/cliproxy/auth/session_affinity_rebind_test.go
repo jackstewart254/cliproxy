@@ -234,9 +234,10 @@ func TestSessionAffinityFallbackAliasByRebindMode(t *testing.T) {
 }
 
 // A session bound to a health-checked hub is served by a local login per request
-// while the hub is health blocked (fill-first keeps it on the same one), keeps
-// its hub binding, and goes back to the hub as soon as the block lifts, so the
-// hub's account ranking governs it again.
+// while the hub is health blocked (fill-first keeps it on the same one). The
+// local successes run OnResult but leave the hub binding alone, so the session
+// goes back to the hub as soon as the block lifts and the hub's account ranking
+// governs it again.
 func TestSessionAffinityHealthBlockedHubServesLocallyThenReturns(t *testing.T) {
 	for session, sessionOpts := range rebindTestSessions {
 		t.Run(session, func(t *testing.T) {
@@ -246,7 +247,8 @@ func TestSessionAffinityHealthBlockedHubServesLocallyThenReturns(t *testing.T) {
 			affinity := NewSessionAffinitySelectorWithConfig(SessionAffinityConfig{Fallback: &FillFirstSelector{}, TTL: time.Hour, RebindOnQuota: true})
 			t.Cleanup(affinity.Stop)
 			manager.SetSelector(affinity)
-			manager.RegisterExecutor(schedulerTestExecutor{provider: provider})
+			executor := &rebindTestExecutor{schedulerTestExecutor: schedulerTestExecutor{provider: provider}}
+			manager.RegisterExecutor(executor)
 			hubID, localID, spareID := provider+"-hub", provider+"-local", provider+"-spare"
 			for id, attrs := range map[string]map[string]string{
 				hubID:   {"priority": "100", "health_check": "true"},
@@ -259,27 +261,27 @@ func TestSessionAffinityHealthBlockedHubServesLocallyThenReturns(t *testing.T) {
 				registry.GetGlobalRegistry().RegisterClient(id, provider, []*registry.ModelInfo{{ID: model}})
 				t.Cleanup(func() { registry.GetGlobalRegistry().UnregisterClient(id) })
 			}
-			pick := func(turn int) string {
+			execute := func(turn int) string {
 				t.Helper()
-				auth, _, errPick := manager.pickNext(ctx, provider, model, sessionOpts(turn), nil)
-				if errPick != nil {
-					t.Fatalf("pickNext: %v", errPick)
+				executor.served = ""
+				if _, errExecute := manager.Execute(ctx, []string{provider}, cliproxyexecutor.Request{Model: model}, sessionOpts(turn)); errExecute != nil {
+					t.Fatalf("turn %d: Execute: %v", turn, errExecute)
 				}
-				return auth.ID
+				return executor.served
 			}
 
-			if got := pick(1); got != hubID {
-				t.Fatalf("cold binding = %q, want the hub %q", got, hubID)
+			if got := execute(1); got != hubID {
+				t.Fatalf("cold turn served by %q, want the hub %q", got, hubID)
 			}
 			manager.SetHealthBlock(hubID, time.Now().Add(time.Minute))
-			for turn := 2; turn <= 3; turn++ {
-				if got := pick(turn); got != localID {
-					t.Fatalf("turn %d while the hub is health blocked = %q, want %q", turn, got, localID)
+			for turn := 2; turn <= 4; turn++ {
+				if got := execute(turn); got != localID {
+					t.Fatalf("turn %d while the hub is health blocked served by %q, want %q", turn, got, localID)
 				}
 			}
 			manager.SetHealthBlock(hubID, time.Time{})
-			if got := pick(4); got != hubID {
-				t.Fatalf("turn after the block lifted = %q, want back on the hub %q", got, hubID)
+			if got := execute(5); got != hubID {
+				t.Fatalf("turn after the block lifted served by %q, want back on the hub %q", got, hubID)
 			}
 		})
 	}
