@@ -64,15 +64,21 @@ PC key, then Mac binary, then Mac config. Do one Mac at a time.
    powershell -NoProfile -ExecutionPolicy Bypass -File C:\Users\User\cliproxy\hub-add-device.ps1 -Device macbook-air -Apply
    ```
 
-   It backs up `C:\Users\User\cliproxy\config.yaml`, adds the key to
-   `access.api-keys` and writes it to `C:\Users\User\.cli-proxy-api\hub-keys\macbook-air.key`.
+   Contract: `hub-add-device.ps1 -Device <d> [-Apply] [-OutFile <p>] [-Revoke]`.
+   Dry run unless `-Apply`. It backs up `C:\Users\User\cliproxy\config.yaml`
+   (`.bak-hubdev-<stamp>`), adds the key to `access.api-keys` and writes it,
+   readable by this user only, to `-OutFile` when given (that file only; it must
+   not exist yet, and its folder must), else to
+   `C:\Users\User\cliproxy\hub-keys\<d>.key`. A setup that Taildrops the file
+   deletes it afterwards. `-Revoke -Apply` removes the key from the config and
+   deletes `hub-keys\<d>.key`. `-Config` and `-KeyDir` override the defaults.
    The PC proxy reloads client keys by itself (watcher, then
    `access.ApplyAccessProviders`); no restart. Device names: `macbook-pro-3`, `macbook-air`.
 
-2. **Key to the Mac**, over Tailscale, never printed:
+2. **Key to the Mac**, over Tailscale, never printed (or Taildrop the `-OutFile`):
 
    ```sh
-   scp 'jacks-desktop:.cli-proxy-api/hub-keys/macbook-air.key' ~/.cli-proxy-api/hub.key
+   scp 'jacks-desktop:cliproxy/hub-keys/macbook-air.key' ~/.cli-proxy-api/hub.key
    chmod 600 ~/.cli-proxy-api/hub.key
    printf 'Authorization: Bearer %s\n' "$(cat ~/.cli-proxy-api/hub.key)" \
      | curl -s -o /dev/null -w '%{http_code}\n' -H @- http://jacks-desktop.taila5e4cd.ts.net/v1/models   # expect 200
@@ -105,8 +111,9 @@ PC key, then Mac binary, then Mac config. Do one Mac at a time.
 - **Mac binary:** copy the `.prev` binary over the live one (copy, then rename)
   and kickstart. The hub group is safe on the old binary, so either order works.
 - **One Mac's access** (hot reload on the PC):
-  `hub-add-device.ps1 -Device macbook-air -Revoke -Apply`. That Mac gets 401 from
-  the hub, cools it for 30 min per model and serves from its own logins.
+  `hub-add-device.ps1 -Device macbook-air -Revoke -Apply`, which also deletes
+  `hub-keys\macbook-air.key`. That Mac gets 401 from the hub, cools it for
+  30 min per model and serves from its own logins.
 - Backups hold the same secrets as the live configs. Keep them mode 600, or
   delete them once settled.
 
