@@ -190,4 +190,22 @@ type Config struct {
 
 	// Payload defines default and override rules for provider payload parameters.
 	Payload PayloadConfig `yaml:"payload" json:"payload"`
+
+	// Transcription turns uploaded voice memos into speaker-labelled
+	// transcripts with a local wrapper command. Off by default.
+	Transcription Transcription `yaml:"transcription,omitempty" json:"transcription"`
+}
+
+// Transcription runs one job at a time: Command Args... -InputPath <audio>
+// -OutDir <job folder> [-Speakers N] [-Language xx].
+type Transcription struct {
+	Enabled bool     `yaml:"enabled" json:"enabled"`
+	Command string   `yaml:"command,omitempty" json:"command,omitempty"`
+	Args    []string `yaml:"args,omitempty" json:"args,omitempty"`
+	// Dir holds a folder per job. Empty: "transcriptions" next to the config file.
+	Dir string `yaml:"dir,omitempty" json:"dir,omitempty"`
+	// MaxUploadMB caps one upload. 0: 500.
+	MaxUploadMB int `yaml:"max-upload-mb,omitempty" json:"max-upload-mb,omitempty"`
+	// Timeout stops a job that runs longer, as a Go duration such as "2h". Empty: 2h.
+	Timeout string `yaml:"timeout,omitempty" json:"timeout,omitempty"`
 }

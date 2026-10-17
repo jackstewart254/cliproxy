@@ -28,6 +28,7 @@ func (s *Server) registerManagementV8Routes() {
 	}
 
 	v8.GET("/server/latest-version", s.mgmt.GetLatestVersion)
+	v8.GET("/server/system", s.mgmt.GetSystem)
 	v8.POST("/requests/api-call", s.mgmt.APICall)
 	v8.POST("/routing/cooldown/reset", s.mgmt.ResetQuota)
 	v8.GET("/routing/model-definitions/:channel", s.mgmt.GetStaticModelDefinitions)
@@ -62,4 +63,6 @@ func (s *Server) registerManagementV8Routes() {
 	v8.GET("/plugins/:id/quota", s.mgmt.GetPluginQuota)
 	v8.POST("/plugins/:id/quota", s.mgmt.FetchPluginQuota)
 	v8.DELETE("/plugins/:id/quota", s.mgmt.ResetPluginQuota)
+
+	s.registerTranscriptionV8Routes(v8)
 }

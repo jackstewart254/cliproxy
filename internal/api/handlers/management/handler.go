@@ -61,6 +61,11 @@ type Handler struct {
 	pluginStoreHTTPClient   pluginstore.HTTPDoer
 	pluginStoreRateLimiter  *pluginstore.GitHubRateLimiter
 	pluginReleases          pluginReleaseCache
+	// refusedDeviceKeys holds url+key pairs a device answered 401 to. Asking
+	// again would get this host banned there after five tries, which through
+	// Tailscale Serve is the device's own loopback address. Cleared on config
+	// reload.
+	refusedDeviceKeys sync.Map
 }
 
 type configReloadSnapshot struct {
@@ -129,6 +134,7 @@ func (h *Handler) SetConfig(cfg *config.Config) {
 	h.mu.Lock()
 	h.cfg = cfg
 	h.mu.Unlock()
+	h.refusedDeviceKeys.Clear()
 }
 
 // SetAuthManager updates the auth manager reference used by management endpoints.
@@ -270,6 +276,11 @@ func (h *Handler) Middleware() gin.HandlerFunc {
 		c.Header("X-CPA-BUILD-DATE", buildinfo.BuildDate)
 		c.Header("X-CPA-SUPPORT-PLUGIN", pluginhost.SupportPluginHeaderValue())
 
+		// ClientIP is the TCP peer unless trusted-proxies lists it. Tailscale
+		// Serve connects from loopback, so with trusted-proxies empty its
+		// requests count as local: the key is still required, allow-remote is
+		// not, and failed keys count against the loopback ban bucket. Its
+		// X-Forwarded-For is never read here.
 		clientIP := c.ClientIP()
 		localClient := clientIP == "127.0.0.1" || clientIP == "::1"
 
