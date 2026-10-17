@@ -232,3 +232,51 @@ func TestSessionAffinityFallbackAliasByRebindMode(t *testing.T) {
 		})
 	}
 }
+
+// A session bound to a health-checked hub moves to a local credential once the
+// health check blocks the hub, and stays there after the hub answers again: in
+// quota mode it must not stay pinned to a dead hub.
+func TestSessionAffinityRebindOnQuotaMovesOffHealthBlockedHub(t *testing.T) {
+	for session, sessionOpts := range rebindTestSessions {
+		t.Run(session, func(t *testing.T) {
+			ctx := context.Background()
+			provider, model := "rebind-health-"+session, "rebind-model"
+			manager := NewManager(nil, nil, nil)
+			affinity := NewSessionAffinitySelectorWithConfig(SessionAffinityConfig{Fallback: &FillFirstSelector{}, TTL: time.Hour, RebindOnQuota: true})
+			t.Cleanup(affinity.Stop)
+			manager.SetSelector(affinity)
+			manager.RegisterExecutor(schedulerTestExecutor{provider: provider})
+			hubID, localID := provider+"-hub", provider+"-local"
+			for id, attrs := range map[string]map[string]string{
+				hubID:   {"priority": "100", "health_check": "true"},
+				localID: {"priority": "1"},
+			} {
+				if _, errRegister := manager.Register(WithSkipPersist(ctx), &Auth{ID: id, Provider: provider, Status: StatusActive, Attributes: attrs}); errRegister != nil {
+					t.Fatalf("Register(%s): %v", id, errRegister)
+				}
+				registry.GetGlobalRegistry().RegisterClient(id, provider, []*registry.ModelInfo{{ID: model}})
+				t.Cleanup(func() { registry.GetGlobalRegistry().UnregisterClient(id) })
+			}
+			pick := func(turn int) string {
+				t.Helper()
+				auth, _, errPick := manager.pickNext(ctx, provider, model, sessionOpts(turn), nil)
+				if errPick != nil {
+					t.Fatalf("pickNext: %v", errPick)
+				}
+				return auth.ID
+			}
+
+			if got := pick(1); got != hubID {
+				t.Fatalf("cold binding = %q, want the hub %q", got, hubID)
+			}
+			manager.SetHealthBlock(hubID, time.Now().Add(time.Minute))
+			if got := pick(2); got != localID {
+				t.Fatalf("pick while the hub is health blocked = %q, want %q", got, localID)
+			}
+			manager.SetHealthBlock(hubID, time.Time{})
+			if got := pick(3); got != localID {
+				t.Fatalf("pick after the hub recovered = %q, want the rebound %q", got, localID)
+			}
+		})
+	}
+}

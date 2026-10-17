@@ -122,3 +122,32 @@ func TestHealthCheckBlocksHungHubAndLiftsOnRecovery(t *testing.T) {
 		t.Fatalf("hub not back in rotation: %q", got)
 	}
 }
+
+// A hub that refuses connections (PC offline, proxy down) fails its probe at
+// once and is blocked after two rounds, like a hung one.
+func TestHealthCheckBlocksUnreachableHub(t *testing.T) {
+	closed := httptest.NewServer(http.NotFoundHandler())
+	closed.Close() // nothing listens on this port any more
+
+	ctx := context.Background()
+	manager := coreauth.NewManager(nil, nil, nil)
+	hub := &coreauth.Auth{ID: "health-unreachable-hub", Provider: "claude", Status: coreauth.StatusActive,
+		Attributes: map[string]string{"priority": "100", "base_url": closed.URL, "health_check": "true"}}
+	if _, err := manager.Register(ctx, hub); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	service := &Service{cfg: &config.Config{}, coreManager: manager}
+	failures := make(map[string]int)
+	blocked := func() bool {
+		a, _ := manager.GetByID(hub.ID)
+		return a.HealthBlockedUntil.After(time.Now())
+	}
+	service.checkHealth(ctx, failures)
+	if blocked() {
+		t.Fatal("one refused probe already blocked the hub")
+	}
+	service.checkHealth(ctx, failures)
+	if !blocked() {
+		t.Fatal("two refused probes did not block the hub")
+	}
+}
