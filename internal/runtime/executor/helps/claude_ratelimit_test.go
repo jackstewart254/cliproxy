@@ -344,7 +344,7 @@ func TestClaudeHeadersIndicateUnifiedRateLimitRejection_OverageRejection_Utiliza
 	}{
 		{name: "healthy zero utilization", utilization: "0.00", wantUnified: false},
 		{name: "healthy partial utilization", utilization: "0.50", wantUnified: false},
-		{name: "missing utilization", utilization: "", wantUnified: true},
+		{name: "missing utilization (Fable cap, no 5h headers)", utilization: "", wantUnified: false},
 		{name: "invalid text", utilization: "invalid", wantUnified: true},
 		{name: "NaN", utilization: "NaN", wantUnified: true},
 		{name: "+Inf", utilization: "+Inf", wantUnified: true},
@@ -365,5 +365,66 @@ func TestClaudeHeadersIndicateUnifiedRateLimitRejection_OverageRejection_Utiliza
 				t.Fatalf("ClaudeHeadersIndicateUnifiedRateLimitRejection() with 5h-utilization %q = %v, want %v", tt.utilization, got, tt.wantUnified)
 			}
 		})
+	}
+}
+
+func fableCapHeaders() http.Header {
+	return http.Header{
+		"Anthropic-Ratelimit-Unified-Status":                  []string{"rejected"},
+		"Anthropic-Ratelimit-Unified-7d-Status":               []string{"allowed"},
+		"Anthropic-Ratelimit-Unified-7d-Utilization":          []string{"0.55"},
+		"Anthropic-Ratelimit-Unified-7d-Reset":                []string{"1795838400"},
+		"Anthropic-Ratelimit-Unified-7d_oi-Status":            []string{"rejected"},
+		"Anthropic-Ratelimit-Unified-7d_oi-Utilization":       []string{"1.0"},
+		"Anthropic-Ratelimit-Unified-7d_oi-Reset":             []string{"1795838400"},
+		"Anthropic-Ratelimit-Unified-Overage-Status":          []string{"rejected"},
+		"Anthropic-Ratelimit-Unified-Overage-Disabled-Reason": []string{"org_level_disabled"},
+		"Anthropic-Ratelimit-Unified-Representative-Claim":    []string{"seven_day_overage_included"},
+		"Anthropic-Ratelimit-Unified-Reset":                   []string{"1795838400"},
+		"Retry-After":                                         []string{"272853"},
+	}
+}
+
+func TestFableCapWithoutAny5hHeadersIsModelScoped(t *testing.T) {
+	h := fableCapHeaders()
+	if ClaudeHeadersIndicateUnifiedRateLimitRejection(h) {
+		t.Fatal("Fable cap with no 5h headers was credential-scoped")
+	}
+	if d := ParseClaudeRateLimitReset(h, time.Unix(1795838400-272853, 0)); d != nil {
+		t.Fatalf("ParseClaudeRateLimitReset = %v, want nil for Fable-only rejection", *d)
+	}
+}
+
+func TestFableCapStaysCredentialScopedWhenSharedWindowRejected(t *testing.T) {
+	cases := map[string][2]string{
+		"5h rejected":  {"Anthropic-Ratelimit-Unified-5h-Status", "rejected"},
+		"7d rejected":  {"Anthropic-Ratelimit-Unified-7d-Status", "rejected"},
+		"5h util full": {"Anthropic-Ratelimit-Unified-5h-Utilization", "1.0"},
+		"5h util junk": {"Anthropic-Ratelimit-Unified-5h-Utilization", "junk"},
+	}
+	for name, kv := range cases {
+		h := fableCapHeaders()
+		h.Set(kv[0], kv[1])
+		if !ClaudeHeadersIndicateUnifiedRateLimitRejection(h) {
+			t.Fatalf("%s: want credential-scoped", name)
+		}
+	}
+
+	// The overage-claim guard: with no 5h headers, only an overage claim is model-scoped.
+	claimCases := map[string]string{"claim five_hour": "five_hour", "claim seven_day": "seven_day", "claim missing": ""}
+	for name, claim := range claimCases {
+		h := fableCapHeaders()
+		if claim == "" {
+			h.Del("Anthropic-Ratelimit-Unified-Representative-Claim")
+		} else {
+			h.Set("Anthropic-Ratelimit-Unified-Representative-Claim", claim)
+		}
+		// Neutralise the other overage signals so only the claim is under test.
+		h.Del("Anthropic-Ratelimit-Unified-Overage-Status")
+		h.Del("Anthropic-Ratelimit-Unified-Overage-Disabled-Reason")
+		h.Set("Anthropic-Ratelimit-Unified-7d_oi-Status", "rejected")
+		if !ClaudeHeadersIndicateUnifiedRateLimitRejection(h) {
+			t.Fatalf("%s: want credential-scoped", name)
+		}
 	}
 }
