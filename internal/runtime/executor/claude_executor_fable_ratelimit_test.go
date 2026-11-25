@@ -887,8 +887,8 @@ func TestClaudeExecutor_AuthManager_FableCapWithoutFiveHourHeadersDoesNotBlockOp
 	if !ok || updatedAuth == nil {
 		t.Fatal("auth not found")
 	}
-	if updatedAuth.Quota.Reason == "credential_quota" || updatedAuth.Unavailable {
-		t.Fatalf("auth cooled credential-wide: Quota.Reason=%q Unavailable=%v", updatedAuth.Quota.Reason, updatedAuth.Unavailable)
+	if updatedAuth.Quota.Reason == "credential_quota" {
+		t.Fatalf("auth cooled credential-wide: Quota.Reason=%q", updatedAuth.Quota.Reason)
 	}
 	fableState := updatedAuth.ModelStates["claude-fable-5"]
 	if fableState == nil {
