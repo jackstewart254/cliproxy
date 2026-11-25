@@ -75,7 +75,14 @@ func isOverageOrFableOnlyRejection(headers http.Header, status5h, status7d, stat
 	// Require an explicit, valid non-negative utilization below 1.0 before
 	// treating the unmentioned window as healthy.
 	if shared7dAllowed && status5h == "" {
-		if isClaudeUtilizationHealthy(getHeaderCaseInsensitive(headers, "Anthropic-Ratelimit-Unified-5h-Utilization")) {
+		util5h := getHeaderCaseInsensitive(headers, "Anthropic-Ratelimit-Unified-5h-Utilization")
+		if isClaudeUtilizationHealthy(util5h) {
+			return true
+		}
+		// A Fable-cap rejection (representative claim seven_day_overage_included)
+		// carries no 5h headers at all while the 7d window is explicitly allowed.
+		// With the claim naming the overage window, absence is not ambiguity.
+		if strings.TrimSpace(util5h) == "" && strings.Contains(representativeClaim, "overage") {
 			return true
 		}
 	}

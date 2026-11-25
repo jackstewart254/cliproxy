@@ -798,3 +798,22 @@ func TestClaudeExecutor_AuthManager_OverageSpendCapFirstRequestAllowsOpus_Issue5
 		t.Fatalf("Opus upstream attempts = %d, want 1", got)
 	}
 }
+
+func TestClassifyClaudeUpstreamError_FableCapWithoutFiveHourHeadersIsModelScoped(t *testing.T) {
+	headers := http.Header{
+		"Anthropic-Ratelimit-Unified-Status":               []string{"rejected"},
+		"Anthropic-Ratelimit-Unified-7d-Status":            []string{"allowed"},
+		"Anthropic-Ratelimit-Unified-7d_oi-Status":         []string{"rejected"},
+		"Anthropic-Ratelimit-Unified-Representative-Claim": []string{"seven_day_overage_included"},
+		"Retry-After": []string{"272853"},
+	}
+	err := classifyClaudeUpstreamError(http.StatusTooManyRequests, headers, []byte(`{"type":"error","error":{"type":"rate_limit_error","message":"cap"}}`))
+	var scoped interface{ IsCredentialScoped() bool }
+	if !errors.As(err, &scoped) || scoped.IsCredentialScoped() {
+		t.Fatal("Fable cap without 5h headers must be model-scoped")
+	}
+	var ra interface{ RetryAfter() *time.Duration }
+	if errors.As(err, &ra) && ra.RetryAfter() != nil {
+		t.Fatalf("retryAfter = %v, want nil", *ra.RetryAfter())
+	}
+}
