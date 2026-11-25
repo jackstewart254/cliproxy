@@ -817,3 +817,96 @@ func TestClassifyClaudeUpstreamError_FableCapWithoutFiveHourHeadersIsModelScoped
 		t.Fatalf("retryAfter = %v, want nil", *ra.RetryAfter())
 	}
 }
+
+func TestClaudeExecutor_AuthManager_FableCapWithoutFiveHourHeadersDoesNotBlockOpus(t *testing.T) {
+	var fableAttempts, opusAttempts atomic.Int32
+	reset := time.Now().Add(7 * 24 * time.Hour).Unix()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, errRead := io.ReadAll(r.Body)
+		if errRead != nil {
+			http.Error(w, "failed to read sanitized test request", http.StatusBadRequest)
+			return
+		}
+		switch {
+		case strings.Contains(string(body), `"model":"claude-fable-5"`):
+			fableAttempts.Add(1)
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Anthropic-Ratelimit-Unified-Status", "rejected")
+			w.Header().Set("Anthropic-Ratelimit-Unified-7d-Status", "allowed")
+			w.Header().Set("Anthropic-Ratelimit-Unified-7d_oi-Status", "rejected")
+			w.Header().Set("Anthropic-Ratelimit-Unified-Representative-Claim", "seven_day_overage_included")
+			w.Header().Set("Anthropic-Ratelimit-Unified-Overage-Disabled-Reason", "org_level_disabled")
+			w.Header().Set("Anthropic-Ratelimit-Unified-7d_oi-Reset", strconv.FormatInt(reset, 10))
+			w.Header().Set("Retry-After", "272853")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte(`{"type":"error","error":{"type":"rate_limit_error","message":"Fable usage window rejected."}}`))
+		case strings.Contains(string(body), `"model":"claude-opus-5"`):
+			opusAttempts.Add(1)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"id":"msg-opus-ok","type":"message","model":"claude-opus-5","role":"assistant","content":[{"type":"text","text":"ok"}]}`))
+		default:
+			http.Error(w, "unexpected sanitized test model", http.StatusBadRequest)
+		}
+	}))
+	defer server.Close()
+
+	manager := cliproxyauth.NewManager(nil, nil, nil)
+	manager.SetRetryConfig(0, 0, 0)
+	manager.RegisterExecutor(NewClaudeExecutor(&config.Config{DisableCooling: false}))
+
+	auth := &cliproxyauth.Auth{
+		ID:       uuid.NewString() + "-fable-cap-no5h",
+		Provider: "claude",
+		Attributes: map[string]string{
+			"api_key":  "sanitized-test-key",
+			"base_url": server.URL,
+		},
+	}
+	reg := registry.GetGlobalRegistry()
+	reg.RegisterClient(auth.ID, "claude", []*registry.ModelInfo{{ID: "claude-fable-5"}, {ID: "claude-opus-5"}})
+	t.Cleanup(func() { reg.UnregisterClient(auth.ID) })
+	if _, err := manager.Register(context.Background(), auth); err != nil {
+		t.Fatalf("register auth: %v", err)
+	}
+
+	payloadFable := []byte(`{"model":"claude-fable-5","messages":[{"role":"user","content":[{"type":"text","text":"test"}]}]}`)
+	_, errFable := manager.Execute(context.Background(), []string{"claude"}, cliproxyexecutor.Request{
+		Model:   "claude-fable-5",
+		Payload: payloadFable,
+	}, cliproxyexecutor.Options{SourceFormat: sdktranslator.FormatClaude})
+	if errFable == nil {
+		t.Fatal("expected Fable request to be rate limited")
+	}
+	if got := fableAttempts.Load(); got != 1 {
+		t.Fatalf("Fable upstream attempts = %d, want 1", got)
+	}
+
+	// Verify that Fable model state cooldown is driven by Retry-After (~120s) and not 7 days.
+	updatedAuth, ok := manager.GetByID(auth.ID)
+	if !ok || updatedAuth == nil {
+		t.Fatal("auth not found")
+	}
+	if updatedAuth.Quota.Reason == "credential_quota" || updatedAuth.Unavailable {
+		t.Fatalf("auth cooled credential-wide: Quota.Reason=%q Unavailable=%v", updatedAuth.Quota.Reason, updatedAuth.Unavailable)
+	}
+	fableState := updatedAuth.ModelStates["claude-fable-5"]
+	if fableState == nil {
+		t.Fatal("fable model state not found")
+	}
+	if fableState.Quota.NextRecoverAt.After(time.Now().Add(5 * time.Minute)) {
+		t.Fatalf("fable model state cooldown too long: NextRecoverAt = %v (want ~120s, not 7 days)", fableState.Quota.NextRecoverAt)
+	}
+
+	payloadOpus := []byte(`{"model":"claude-opus-5","messages":[{"role":"user","content":[{"type":"text","text":"test"}]}]}`)
+	_, errOpus := manager.Execute(context.Background(), []string{"claude"}, cliproxyexecutor.Request{
+		Model:   "claude-opus-5",
+		Payload: payloadOpus,
+	}, cliproxyexecutor.Options{SourceFormat: sdktranslator.FormatClaude})
+	if errOpus != nil {
+		t.Fatalf("expected Opus to reach upstream on the same credential, got: %v", errOpus)
+	}
+	if got := opusAttempts.Load(); got != 1 {
+		t.Fatalf("Opus upstream attempts = %d, want 1", got)
+	}
+}

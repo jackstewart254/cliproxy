@@ -409,4 +409,22 @@ func TestFableCapStaysCredentialScopedWhenSharedWindowRejected(t *testing.T) {
 			t.Fatalf("%s: want credential-scoped", name)
 		}
 	}
+
+	// The overage-claim guard: with no 5h headers, only an overage claim is model-scoped.
+	claimCases := map[string]string{"claim five_hour": "five_hour", "claim seven_day": "seven_day", "claim missing": ""}
+	for name, claim := range claimCases {
+		h := fableCapHeaders()
+		if claim == "" {
+			h.Del("Anthropic-Ratelimit-Unified-Representative-Claim")
+		} else {
+			h.Set("Anthropic-Ratelimit-Unified-Representative-Claim", claim)
+		}
+		// Neutralise the other overage signals so only the claim is under test.
+		h.Del("Anthropic-Ratelimit-Unified-Overage-Status")
+		h.Del("Anthropic-Ratelimit-Unified-Overage-Disabled-Reason")
+		h.Set("Anthropic-Ratelimit-Unified-7d_oi-Status", "rejected")
+		if !ClaudeHeadersIndicateUnifiedRateLimitRejection(h) {
+			t.Fatalf("%s: want credential-scoped", name)
+		}
+	}
 }
